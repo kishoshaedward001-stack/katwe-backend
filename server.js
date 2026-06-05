@@ -1,133 +1,119 @@
 const express = require('express');
 const cors = require('cors');
-const mysql = require('mysql2');
+const { Pool } = require('pg');
+const nodemailer = require('nodemailer');
 const dotenv = require('dotenv');
 
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 5002;
+const PORT = process.env.PORT || 5000;
 
 app.use(cors());
 app.use(express.json());
 
-// Kwanza unganisha bila database
-const db = mysql.createConnection({
-    host: 'localhost',
-    user: 'root',
-    password: ''
+// Database connection
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false }
 });
 
-// Unda database na tables
-db.connect((err) => {
-    if (err) {
-        console.error('Connection error:', err);
-        return;
+// Email configuration (Gmail)
+const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+        user: process.env.EMAIL_USER, // Barua pepe yako
+        pass: process.env.EMAIL_PASS  // App password (sio password ya kawaida)
     }
-    console.log('Connected to MySQL server');
+});
+
+// ============ SEND EMAIL ENDPOINT ============
+app.post('/api/send-results', async (req, res) => {
+    const { student, results } = req.body;
     
-    // Unda database
-    db.query('CREATE DATABASE IF NOT EXISTS katwe_school_db', (err) => {
-        if (err) {
-            console.error('Error creating database:', err);
-            return;
-        }
-        console.log('✅ Database ensured');
-        
-        // Sasa unganisha kwenye database
-        const dbWithDB = mysql.createConnection({
-            host: 'localhost',
-            user: 'root',
-            password: '',
-            database: 'katwe_school_db'
+    // Build email content
+    const emailContent = `
+        <h2>Katwe Secondary School - Matokeo ya Mitihani</h2>
+        <p><strong>Jina:</strong> ${student.fullName}</p>
+        <p><strong>Kozi:</strong> ${student.course}</p>
+        <hr/>
+        <h3>Matokeo:</h3>
+        <ul>
+            <li>${results.subject1}: ${results.grade1}</li>
+            <li>${results.subject2}: ${results.grade2}</li>
+            <li>${results.subject3}: ${results.grade3}</li>
+            <li>${results.subject4}: ${results.grade4}</li>
+        </ul>
+        <p><strong>Maoni:</strong> ${results.remarks}</p>
+        <hr/>
+        <p>Asante,<br/>Katwe Secondary School</p>
+    `;
+    
+    try {
+        await transporter.sendMail({
+            from: process.env.EMAIL_USER,
+            to: student.email,
+            subject: `Matokeo yako - ${student.fullName}`,
+            html: emailContent
         });
         
-        dbWithDB.connect((err) => {
-            if (err) {
-                console.error('Error connecting to database:', err);
-                return;
-            }
-            console.log('✅ Connected to katwe_school_db');
-            
-            // Unda table
-            const createTable = `
-            CREATE TABLE IF NOT EXISTS students (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                fullName VARCHAR(255) NOT NULL,
-                age INT NOT NULL,
-                gender ENUM('MALE', 'FEMALE') NOT NULL,
-                course VARCHAR(255) NOT NULL,
-                phone VARCHAR(20),
-                createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )`;
-            
-            dbWithDB.query(createTable, (err) => {
-                if (err) {
-                    console.error('Error creating table:', err);
-                } else {
-                    console.log('✅ Students table ready');
-                    
-                    // Ingiza sample data ikiwa table ni tupu
-                    dbWithDB.query('SELECT COUNT(*) as count FROM students', (err, result) => {
-                        if (err) return;
-                        if (result[0].count === 0) {
-                            const sampleData = `
-                            INSERT INTO students (fullName, age, gender, course, phone) VALUES
-                            ('Mariamu Ramadhani', 23, 'FEMALE', 'information technology', '0712345678'),
-                            ('Martha Juma', 22, 'FEMALE', 'chemistry', '7474785785'),
-                            ('zabron elikana', 23, 'MALE', 'science', ''),
-                            ('John Doe', 22, 'MALE', 'BSc. Computer Science', '0712345679')`;
-                            
-                            dbWithDB.query(sampleData, (err) => {
-                                if (err) console.error('Error inserting sample data:', err);
-                                else console.log('✅ Sample data inserted');
-                            });
-                        }
-                    });
-                }
-            });
-            
-            // API endpoints (tumia dbWithDB)
-            app.get('/api/students', (req, res) => {
-                dbWithDB.query('SELECT * FROM students ORDER BY createdAt DESC', (err, results) => {
-                    if (err) return res.status(500).json({ error: err.message });
-                    res.json(results);
-                });
-            });
-            
-            app.post('/api/students', (req, res) => {
-                const { fullName, age, gender, course, phone } = req.body;
-                if (!fullName || !age || !gender || !course) {
-                    return res.status(400).json({ message: 'Missing required fields' });
-                }
-                const sql = 'INSERT INTO students (fullName, age, gender, course, phone) VALUES (?, ?, ?, ?, ?)';
-                dbWithDB.query(sql, [fullName, age, gender, course, phone || null], (err, result) => {
-                    if (err) return res.status(500).json({ error: err.message });
-                    res.status(201).json({ id: result.insertId, fullName, age, gender, course, phone });
-                });
-            });
-            
-            app.put('/api/students/:id', (req, res) => {
-                const { fullName, age, gender, course, phone } = req.body;
-                const sql = 'UPDATE students SET fullName = ?, age = ?, gender = ?, course = ?, phone = ? WHERE id = ?';
-                dbWithDB.query(sql, [fullName, age, gender, course, phone, req.params.id], (err, result) => {
-                    if (err) return res.status(500).json({ error: err.message });
-                    if (result.affectedRows === 0) return res.status(404).json({ message: 'Student not found' });
-                    res.json({ message: 'Student updated successfully' });
-                });
-            });
-            
-            app.delete('/api/students/:id', (req, res) => {
-                dbWithDB.query('DELETE FROM students WHERE id = ?', [req.params.id], (err, result) => {
-                    if (err) return res.status(500).json({ error: err.message });
-                    if (result.affectedRows === 0) return res.status(404).json({ message: 'Student not found' });
-                    res.json({ message: 'Student deleted successfully' });
-                });
-            });
-        });
-    });
+        res.json({ success: true, message: 'Email imetumwa!' });
+    } catch (error) {
+        console.error('Email error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// ============ API ENDPOINTS (CRUD) ============
+// GET all students
+app.get('/api/students', async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM students ORDER BY "createdAt" DESC');
+        res.json(result.rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// POST new student
+app.post('/api/students', async (req, res) => {
+    const { fullName, age, gender, course, phone, email } = req.body;
+    
+    try {
+        const result = await pool.query(
+            'INSERT INTO students ("fullName", age, gender, course, phone, email) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+            [fullName, age, gender, course, phone || null, email || null]
+        );
+        res.status(201).json(result.rows[0]);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// PUT update student
+app.put('/api/students/:id', async (req, res) => {
+    const { fullName, age, gender, course, phone, email } = req.body;
+    try {
+        const result = await pool.query(
+            'UPDATE students SET "fullName" = $1, age = $2, gender = $3, course = $4, phone = $5, email = $6 WHERE id = $7 RETURNING *',
+            [fullName, age, gender, course, phone, email, req.params.id]
+        );
+        res.json(result.rows[0]);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// DELETE student
+app.delete('/api/students/:id', async (req, res) => {
+    try {
+        await pool.query('DELETE FROM students WHERE id = $1', [req.params.id]);
+        res.json({ message: 'Deleted successfully' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 app.listen(PORT, () => {
-    console.log(`🚀 Server running on http://localhost:${PORT}`);
+    console.log(`🚀 Server running on port ${PORT}`);
 });
