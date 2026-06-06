@@ -6,6 +6,7 @@ const multer = require('multer');
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const dotenv = require('dotenv');
 const { Resend } = require('resend');
+const africastalking = require('africastalking');
 
 dotenv.config();
 
@@ -73,6 +74,28 @@ const storage = new CloudinaryStorage({
 });
 
 const upload = multer({ storage: storage });
+
+// ============ AFRICA'S TALKING SMS ============
+let sms = null;
+if (process.env.AFRICASTALKING_API_KEY && process.env.AFRICASTALKING_USERNAME) {
+    const africasTalking = africastalking({
+        apiKey: process.env.AFRICASTALKING_API_KEY,
+        username: process.env.AFRICASTALKING_USERNAME
+    });
+    sms = africasTalking.SMS;
+    console.log('✅ Africa\'s Talking SMS initialized');
+} else {
+    console.log('⚠️ Africa\'s Talking credentials not set. SMS disabled.');
+}
+
+// ============ RESEND EMAIL ============
+let resend = null;
+if (process.env.RESEND_API_KEY) {
+    resend = new Resend(process.env.RESEND_API_KEY);
+    console.log('✅ Resend email initialized');
+} else {
+    console.log('⚠️ Resend API key not set. Email disabled.');
+}
 
 // ============ API ENDPOINTS ============
 
@@ -197,12 +220,10 @@ app.post('/api/send-results', async (req, res) => {
         return res.status(400).json({ error: 'Missing required fields' });
     }
     
-    if (!process.env.RESEND_API_KEY) {
-        console.error('❌ RESEND_API_KEY not configured');
+    if (!resend) {
+        console.error('❌ Resend not configured');
         return res.status(500).json({ error: 'Email service not configured. Please add RESEND_API_KEY to environment variables.' });
     }
-    
-    const resend = new Resend(process.env.RESEND_API_KEY);
     
     const emailContent = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px;">
@@ -253,8 +274,58 @@ app.post('/api/send-results', async (req, res) => {
     }
 });
 
+// ============ SEND SMS WITH AFRICA'S TALKING ============
+app.post('/api/send-sms', async (req, res) => {
+    const { student, results } = req.body;
+    
+    console.log('📱 Received SMS request for:', student?.phone);
+    
+    if (!student || !results) {
+        console.log('❌ Missing student or results');
+        return res.status(400).json({ error: 'Missing required fields' });
+    }
+    
+    if (!sms) {
+        console.error('❌ Africa\'s Talking not configured');
+        return res.status(500).json({ error: 'SMS service not configured. Please add AFRICASTALKING_API_KEY and AFRICASTALKING_USERNAME to environment variables.' });
+    }
+    
+    if (!student.phone) {
+        console.log('❌ Student has no phone number');
+        return res.status(400).json({ error: 'Student has no phone number' });
+    }
+    
+    // Format phone number (ensure it starts with 255)
+    let phoneNumber = student.phone.trim();
+    if (phoneNumber.startsWith('0')) {
+        phoneNumber = '255' + phoneNumber.substring(1);
+    } else if (phoneNumber.startsWith('+')) {
+        phoneNumber = phoneNumber.substring(1);
+    }
+    
+    console.log('📱 Formatted phone number:', phoneNumber);
+    
+    const smsContent = `Katwe School: ${student.fullName}, Matokeo: ${results.subject1 || 'N/A'}=${results.grade1 || 'N/A'}, ${results.subject2 || 'N/A'}=${results.grade2 || 'N/A'}. ${results.remarks || 'Asante'}`;
+    
+    try {
+        const result = await sms.send({
+            to: phoneNumber,
+            message: smsContent,
+            from: 'KATWE'
+        });
+        
+        console.log('✅ SMS sent successfully:', result);
+        res.json({ success: true, message: 'SMS sent successfully!', result });
+    } catch (error) {
+        console.error('❌ SMS error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Start server
 app.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
     console.log(`✅ Health check: http://localhost:${PORT}/api/health`);
+    console.log(`📧 Email endpoint: http://localhost:${PORT}/api/send-results`);
+    console.log(`📱 SMS endpoint: http://localhost:${PORT}/api/send-sms`);
 });
