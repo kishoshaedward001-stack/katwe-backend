@@ -103,6 +103,21 @@ const createTables = async () => {
             )
         `);
         console.log('✅ Timetables table ready');
+        // Create users table
+await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username VARCHAR(100) UNIQUE NOT NULL,
+        email VARCHAR(255) UNIQUE NOT NULL,
+        password VARCHAR(255) NOT NULL,
+        fullName VARCHAR(255),
+        phone VARCHAR(20),
+        role VARCHAR(20) DEFAULT 'user',
+        isApproved BOOLEAN DEFAULT FALSE,
+        "createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+`);
+console.log('✅ Users table ready');
         
         // Create indexes for faster lookups
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_parents_code ON parents("parentCode")`);
@@ -683,6 +698,126 @@ app.post('/api/send-sms', async (req, res) => {
     } catch (error) {
         console.error('SMS error:', error);
         res.status(500).json({ error: error.message });
+    }
+});
+// ============ USER REGISTRATION ENDPOINTS ============
+
+// User registration
+app.post('/api/auth/register', async (req, res) => {
+    const { username, email, password, fullName, phone } = req.body;
+    
+    if (!username || !email || !password) {
+        return res.status(400).json({ error: 'Username, email and password are required' });
+    }
+    
+    try {
+        // Check if user exists
+        const existing = await pool.query(
+            'SELECT * FROM users WHERE username = $1 OR email = $2',
+            [username, email]
+        );
+        
+        if (existing.rows.length > 0) {
+            return res.status(400).json({ error: 'Username or email already exists' });
+        }
+        
+        // Simple password hashing (for production, use bcrypt)
+        const hashedPassword = Buffer.from(password).toString('base64');
+        
+        const result = await pool.query(
+            `INSERT INTO users (username, email, password, fullName, phone, role, isApproved) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7) 
+             RETURNING id, username, email, fullName, role, isApproved`,
+            [username, email, hashedPassword, fullName || null, phone || null, 'user', false]
+        );
+        
+        res.json({ 
+            success: true, 
+            message: 'Registration successful! Please wait for admin approval.',
+            user: result.rows[0]
+        });
+    } catch (err) {
+        console.error('Registration error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// User login (with approval check)
+app.post('/api/auth/login', async (req, res) => {
+    const { username, password } = req.body;
+    
+    if (!username || !password) {
+        return res.status(400).json({ error: 'Username and password are required' });
+    }
+    
+    try {
+        const hashedPassword = Buffer.from(password).toString('base64');
+        
+        const result = await pool.query(
+            'SELECT * FROM users WHERE username = $1 AND password = $2',
+            [username, hashedPassword]
+        );
+        
+        if (result.rows.length === 0) {
+            return res.status(401).json({ error: 'Invalid username or password' });
+        }
+        
+        const user = result.rows[0];
+        
+        if (!user.isapproved) {
+            return res.status(401).json({ error: 'Your account is pending approval. Please wait for admin to approve.' });
+        }
+        
+        res.json({ 
+            success: true, 
+            user: {
+                id: user.id,
+                username: user.username,
+                email: user.email,
+                fullName: user.fullname,
+                role: user.role,
+                isApproved: user.isapproved
+            }
+        });
+    } catch (err) {
+        console.error('Login error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Get all users (for admin)
+app.get('/api/users', async (req, res) => {
+    try {
+        const result = await pool.query(
+            'SELECT id, username, email, fullName, phone, role, isApproved, "createdAt" FROM users ORDER BY "createdAt" DESC'
+        );
+        res.json(result.rows);
+    } catch (err) {
+        console.error('Error fetching users:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Approve user (admin only)
+app.put('/api/users/:id/approve', async (req, res) => {
+    const { id } = req.params;
+    try {
+        await pool.query('UPDATE users SET isApproved = TRUE WHERE id = $1', [id]);
+        res.json({ success: true, message: 'User approved successfully' });
+    } catch (err) {
+        console.error('Error approving user:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Delete user (admin only)
+app.delete('/api/users/:id', async (req, res) => {
+    try {
+        await pool.query('DELETE FROM users WHERE id = $1', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Error deleting user:', err);
+        res.status(500).json({ error: err.message });
     }
 });
 
