@@ -23,9 +23,10 @@ const pool = new Pool({
     ssl: { rejectUnauthorized: false }
 });
 
-// ============ AUTO-CREATE TABLE ============
-const createTable = async () => {
+// ============ AUTO-CREATE TABLES ============
+const createTables = async () => {
     try {
+        // Create students table
         await pool.query(`
             CREATE TABLE IF NOT EXISTS students (
                 id SERIAL PRIMARY KEY,
@@ -39,19 +40,40 @@ const createTable = async () => {
                 "createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         `);
-        console.log('✅ Students table is ready');
+        console.log('✅ Students table ready');
+        
+        // Create parents table
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS parents (
+                id SERIAL PRIMARY KEY,
+                "parentCode" VARCHAR(20) UNIQUE NOT NULL,
+                "parentName" VARCHAR(255) NOT NULL,
+                phone VARCHAR(20),
+                email VARCHAR(255),
+                "studentId" INTEGER REFERENCES students(id) ON DELETE CASCADE,
+                "createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+        console.log('✅ Parents table ready');
+        
+        // Create index for faster lookups
+        await pool.query(`
+            CREATE INDEX IF NOT EXISTS idx_parents_code ON parents("parentCode")
+        `);
+        console.log('✅ Parents index created');
+        
     } catch (err) {
-        console.error('❌ Error creating table:', err.message);
+        console.error('❌ Error creating tables:', err.message);
     }
 };
 
-// Test database connection and create table
+// Test database connection and create tables
 pool.connect(async (err, client, release) => {
     if (err) {
         console.error('❌ Error connecting to database:', err.message);
     } else {
         console.log('✅ Connected to PostgreSQL database');
-        await createTable();
+        await createTables();
         release();
     }
 });
@@ -209,6 +231,128 @@ app.delete('/api/students/:id', async (req, res) => {
     }
 });
 
+// ============ PARENT MODULE ENDPOINTS ============
+
+// Generate parent code
+app.post('/api/parents/generate', async (req, res) => {
+    const { studentId, parentName, phone, email } = req.body;
+    
+    if (!studentId || !parentName) {
+        return res.status(400).json({ error: 'Student ID and Parent Name are required' });
+    }
+    
+    // Generate random 6-digit code
+    const parentCode = Math.floor(100000 + Math.random() * 900000).toString();
+    
+    try {
+        // Check if parent already exists for this student
+        const existing = await pool.query(
+            'SELECT * FROM parents WHERE "studentId" = $1',
+            [studentId]
+        );
+        
+        if (existing.rows.length > 0) {
+            return res.json({ 
+                success: true, 
+                parentCode: existing.rows[0].parentCode,
+                message: 'Parent code already exists',
+                parent: existing.rows[0]
+            });
+        }
+        
+        const result = await pool.query(
+            `INSERT INTO parents ("parentCode", "parentName", phone, email, "studentId") 
+             VALUES ($1, $2, $3, $4, $5) 
+             RETURNING *`,
+            [parentCode, parentName, phone || null, email || null, studentId]
+        );
+        
+        res.json({ success: true, parentCode, parent: result.rows[0] });
+    } catch (err) {
+        console.error('Error generating parent code:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Parent login
+app.post('/api/parents/login', async (req, res) => {
+    const { parentCode } = req.body;
+    
+    if (!parentCode) {
+        return res.status(400).json({ error: 'Parent code is required' });
+    }
+    
+    try {
+        const result = await pool.query(
+            `SELECT p.*, s."fullName" as "studentName", s.course, s.photo, s.age, s.gender, s.phone as "studentPhone", s.email as "studentEmail"
+             FROM parents p
+             JOIN students s ON p."studentId" = s.id
+             WHERE p."parentCode" = $1`,
+            [parentCode]
+        );
+        
+        if (result.rows.length === 0) {
+            return res.status(401).json({ error: 'Invalid parent code' });
+        }
+        
+        res.json({ success: true, parent: result.rows[0] });
+    } catch (err) {
+        console.error('Parent login error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Get student info for parent
+app.get('/api/parents/:parentCode/student', async (req, res) => {
+    const { parentCode } = req.params;
+    
+    try {
+        const result = await pool.query(
+            `SELECT s.* 
+             FROM students s
+             JOIN parents p ON p."studentId" = s.id
+             WHERE p."parentCode" = $1`,
+            [parentCode]
+        );
+        
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Student not found' });
+        }
+        
+        res.json({ success: true, student: result.rows[0] });
+    } catch (err) {
+        console.error('Error fetching student:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Get all parents (for admin)
+app.get('/api/parents', async (req, res) => {
+    try {
+        const result = await pool.query(
+            `SELECT p.*, s."fullName" as "studentName" 
+             FROM parents p
+             JOIN students s ON p."studentId" = s.id
+             ORDER BY p."createdAt" DESC`
+        );
+        res.json(result.rows);
+    } catch (err) {
+        console.error('Error fetching parents:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Delete parent by id
+app.delete('/api/parents/:id', async (req, res) => {
+    try {
+        await pool.query('DELETE FROM parents WHERE id = $1', [req.params.id]);
+        res.json({ success: true, message: 'Parent deleted successfully' });
+    } catch (err) {
+        console.error('Error deleting parent:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // ============ SEND EMAIL WITH RESEND ============
 app.post('/api/send-results', async (req, res) => {
     const { student, results } = req.body;
@@ -275,7 +419,6 @@ app.post('/api/send-results', async (req, res) => {
 });
 
 // ============ SEND SMS WITH AFRICA'S TALKING ============
-// ============ SEND SMS WITH AFRICA'S TALKING ============
 app.post('/api/send-sms', async (req, res) => {
     const { student, results } = req.body;
     
@@ -295,14 +438,10 @@ app.post('/api/send-sms', async (req, res) => {
     
     // Format phone number correctly
     let phoneNumber = student.phone.toString().trim();
-    // Remove any non-digit characters
     phoneNumber = phoneNumber.replace(/\D/g, '');
-    // If starts with 0, replace with 255
     if (phoneNumber.startsWith('0')) {
         phoneNumber = '255' + phoneNumber.substring(1);
-    }
-    // If starts with 255, keep
-    else if (!phoneNumber.startsWith('255')) {
+    } else if (!phoneNumber.startsWith('255')) {
         phoneNumber = '255' + phoneNumber;
     }
     
@@ -310,8 +449,6 @@ app.post('/api/send-sms', async (req, res) => {
     console.log('📱 Formatted phone:', phoneNumber);
     
     const smsContent = `Katwe School: ${student.fullName}, Matokeo: ${results.subject1 || 'N/A'}=${results.grade1 || 'N/A'}, ${results.subject2 || 'N/A'}=${results.grade2 || 'N/A'}. ${results.remarks || 'Asante'}`;
-    
-    // Truncate message if too long (160 chars max for some networks)
     const finalMessage = smsContent.length > 160 ? smsContent.substring(0, 157) + '...' : smsContent;
     
     try {
@@ -335,4 +472,5 @@ app.listen(PORT, () => {
     console.log(`✅ Health check: http://localhost:${PORT}/api/health`);
     console.log(`📧 Email endpoint: http://localhost:${PORT}/api/send-results`);
     console.log(`📱 SMS endpoint: http://localhost:${PORT}/api/send-sms`);
+    console.log(`👨‍👩‍👧 Parent endpoints: /api/parents/*`);
 });
