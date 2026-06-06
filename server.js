@@ -278,13 +278,9 @@ app.post('/api/parents/generate', async (req, res) => {
 app.post('/api/parents/login', async (req, res) => {
     const { parentCode } = req.body;
     
-    if (!parentCode) {
-        return res.status(400).json({ error: 'Parent code is required' });
-    }
-    
     try {
         const result = await pool.query(
-            `SELECT p.*, s."fullName" as "studentName", s.course, s.photo, s.age, s.gender, s.phone as "studentPhone", s.email as "studentEmail"
+            `SELECT p.*, s."fullName" as "studentName", s.course, s.photo, s.age, s.gender
              FROM parents p
              JOIN students s ON p."studentId" = s.id
              WHERE p."parentCode" = $1`,
@@ -295,13 +291,22 @@ app.post('/api/parents/login', async (req, res) => {
             return res.status(401).json({ error: 'Invalid parent code' });
         }
         
-        res.json({ success: true, parent: result.rows[0] });
+        // Hakikisha unarudisha parentcode (herufi ndogo)
+        const parent = result.rows[0];
+        res.json({ 
+            success: true, 
+            parent: {
+                parentcode: parent.parentCode, // Herufi ndogo!
+                parentname: parent.parentName,
+                phone: parent.phone,
+                email: parent.email,
+                studentId: parent.studentId
+            }
+        });
     } catch (err) {
-        console.error('Parent login error:', err);
         res.status(500).json({ error: err.message });
     }
 });
-
 // Get student info for parent
 app.get('/api/parents/:parentCode/student', async (req, res) => {
     const { parentCode } = req.params;
