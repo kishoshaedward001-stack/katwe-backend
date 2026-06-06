@@ -275,49 +275,56 @@ app.post('/api/send-results', async (req, res) => {
 });
 
 // ============ SEND SMS WITH AFRICA'S TALKING ============
+// ============ SEND SMS WITH AFRICA'S TALKING ============
 app.post('/api/send-sms', async (req, res) => {
     const { student, results } = req.body;
     
     console.log('📱 Received SMS request for:', student?.phone);
     
     if (!student || !results) {
-        console.log('❌ Missing student or results');
         return res.status(400).json({ error: 'Missing required fields' });
     }
     
     if (!sms) {
-        console.error('❌ Africa\'s Talking not configured');
-        return res.status(500).json({ error: 'SMS service not configured. Please add AFRICASTALKING_API_KEY and AFRICASTALKING_USERNAME to environment variables.' });
+        return res.status(500).json({ error: 'SMS service not configured' });
     }
     
     if (!student.phone) {
-        console.log('❌ Student has no phone number');
         return res.status(400).json({ error: 'Student has no phone number' });
     }
     
-    // Format phone number (ensure it starts with 255)
-    let phoneNumber = student.phone.trim();
+    // Format phone number correctly
+    let phoneNumber = student.phone.toString().trim();
+    // Remove any non-digit characters
+    phoneNumber = phoneNumber.replace(/\D/g, '');
+    // If starts with 0, replace with 255
     if (phoneNumber.startsWith('0')) {
         phoneNumber = '255' + phoneNumber.substring(1);
-    } else if (phoneNumber.startsWith('+')) {
-        phoneNumber = phoneNumber.substring(1);
+    }
+    // If starts with 255, keep
+    else if (!phoneNumber.startsWith('255')) {
+        phoneNumber = '255' + phoneNumber;
     }
     
-    console.log('📱 Formatted phone number:', phoneNumber);
+    console.log('📱 Original phone:', student.phone);
+    console.log('📱 Formatted phone:', phoneNumber);
     
     const smsContent = `Katwe School: ${student.fullName}, Matokeo: ${results.subject1 || 'N/A'}=${results.grade1 || 'N/A'}, ${results.subject2 || 'N/A'}=${results.grade2 || 'N/A'}. ${results.remarks || 'Asante'}`;
+    
+    // Truncate message if too long (160 chars max for some networks)
+    const finalMessage = smsContent.length > 160 ? smsContent.substring(0, 157) + '...' : smsContent;
     
     try {
         const result = await sms.send({
             to: phoneNumber,
-            message: smsContent,
-            from: 'KATWE'
+            message: finalMessage,
+            from: 'sandbox'
         });
         
         console.log('✅ SMS sent successfully:', result);
         res.json({ success: true, message: 'SMS sent successfully!', result });
     } catch (error) {
-        console.error('❌ SMS error:', error);
+        console.error('❌ SMS error:', error.message);
         res.status(500).json({ error: error.message });
     }
 });
