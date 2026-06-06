@@ -56,11 +56,35 @@ const createTables = async () => {
         `);
         console.log('✅ Parents table ready');
         
+        // Create results table
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS results (
+                id SERIAL PRIMARY KEY,
+                "studentId" INTEGER REFERENCES students(id) ON DELETE CASCADE,
+                subject1 VARCHAR(100),
+                grade1 VARCHAR(5),
+                subject2 VARCHAR(100),
+                grade2 VARCHAR(5),
+                subject3 VARCHAR(100),
+                grade3 VARCHAR(5),
+                subject4 VARCHAR(100),
+                grade4 VARCHAR(5),
+                remarks TEXT,
+                term VARCHAR(20),
+                year INTEGER,
+                "createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+        console.log('✅ Results table ready');
+        
         // Create index for faster lookups
         await pool.query(`
             CREATE INDEX IF NOT EXISTS idx_parents_code ON parents("parentCode")
         `);
-        console.log('✅ Parents index created');
+        await pool.query(`
+            CREATE INDEX IF NOT EXISTS idx_results_student ON results("studentId")
+        `);
+        console.log('✅ Indexes created');
         
     } catch (err) {
         console.error('❌ Error creating tables:', err.message);
@@ -241,11 +265,9 @@ app.post('/api/parents/generate', async (req, res) => {
         return res.status(400).json({ error: 'Student ID and Parent Name are required' });
     }
     
-    // Generate random 6-digit code
     const parentCode = Math.floor(100000 + Math.random() * 900000).toString();
     
     try {
-        // Check if parent already exists for this student
         const existing = await pool.query(
             'SELECT * FROM parents WHERE "studentId" = $1',
             [studentId]
@@ -278,9 +300,13 @@ app.post('/api/parents/generate', async (req, res) => {
 app.post('/api/parents/login', async (req, res) => {
     const { parentCode } = req.body;
     
+    if (!parentCode) {
+        return res.status(400).json({ error: 'Parent code is required' });
+    }
+    
     try {
         const result = await pool.query(
-            `SELECT p.*, s."fullName" as "studentName", s.course, s.photo, s.age, s.gender
+            `SELECT p.*, s."fullName" as "studentName", s.course, s.photo, s.age, s.gender, s.phone as "studentPhone", s.email as "studentEmail"
              FROM parents p
              JOIN students s ON p."studentId" = s.id
              WHERE p."parentCode" = $1`,
@@ -291,22 +317,28 @@ app.post('/api/parents/login', async (req, res) => {
             return res.status(401).json({ error: 'Invalid parent code' });
         }
         
-        // Hakikisha unarudisha parentcode (herufi ndogo)
         const parent = result.rows[0];
         res.json({ 
             success: true, 
             parent: {
-                parentcode: parent.parentCode, // Herufi ndogo!
+                parentcode: parent.parentCode,
                 parentname: parent.parentName,
                 phone: parent.phone,
                 email: parent.email,
-                studentId: parent.studentId
+                studentId: parent.studentId,
+                studentName: parent.studentName,
+                course: parent.course,
+                photo: parent.photo,
+                age: parent.age,
+                gender: parent.gender
             }
         });
     } catch (err) {
+        console.error('Parent login error:', err);
         res.status(500).json({ error: err.message });
     }
 });
+
 // Get student info for parent
 app.get('/api/parents/:parentCode/student', async (req, res) => {
     const { parentCode } = req.params;
@@ -358,6 +390,85 @@ app.delete('/api/parents/:id', async (req, res) => {
     }
 });
 
+// ============ RESULTS ENDPOINTS ============
+
+// Get student results for parent
+app.get('/api/parents/:parentCode/results', async (req, res) => {
+    const { parentCode } = req.params;
+    
+    try {
+        const parentResult = await pool.query(
+            `SELECT "studentId" FROM parents WHERE "parentCode" = $1`,
+            [parentCode]
+        );
+        
+        if (parentResult.rows.length === 0) {
+            return res.status(404).json({ error: 'Parent not found' });
+        }
+        
+        const studentId = parentResult.rows[0].studentId;
+        
+        const results = await pool.query(
+            `SELECT * FROM results WHERE "studentId" = $1 ORDER BY year DESC, term DESC`,
+            [studentId]
+        );
+        
+        res.json({ success: true, results: results.rows });
+    } catch (err) {
+        console.error('Error fetching results:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Save results (for admin/teacher)
+app.post('/api/results', async (req, res) => {
+    const { studentId, subject1, grade1, subject2, grade2, subject3, grade3, subject4, grade4, remarks, term, year } = req.body;
+    
+    if (!studentId) {
+        return res.status(400).json({ error: 'Student ID is required' });
+    }
+    
+    try {
+        const result = await pool.query(
+            `INSERT INTO results ("studentId", subject1, grade1, subject2, grade2, subject3, grade3, subject4, grade4, remarks, term, year) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) 
+             RETURNING *`,
+            [studentId, subject1 || null, grade1 || null, subject2 || null, grade2 || null, subject3 || null, grade3 || null, subject4 || null, grade4 || null, remarks || null, term || 'Term 1', year || new Date().getFullYear()]
+        );
+        res.json({ success: true, result: result.rows[0] });
+    } catch (err) {
+        console.error('Error saving results:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Get results for a specific student (for admin)
+app.get('/api/students/:studentId/results', async (req, res) => {
+    const { studentId } = req.params;
+    
+    try {
+        const results = await pool.query(
+            `SELECT * FROM results WHERE "studentId" = $1 ORDER BY year DESC, term DESC`,
+            [studentId]
+        );
+        res.json({ success: true, results: results.rows });
+    } catch (err) {
+        console.error('Error fetching results:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Delete result by id
+app.delete('/api/results/:id', async (req, res) => {
+    try {
+        await pool.query('DELETE FROM results WHERE id = $1', [req.params.id]);
+        res.json({ success: true, message: 'Result deleted successfully' });
+    } catch (err) {
+        console.error('Error deleting result:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // ============ SEND EMAIL WITH RESEND ============
 app.post('/api/send-results', async (req, res) => {
     const { student, results } = req.body;
@@ -365,13 +476,11 @@ app.post('/api/send-results', async (req, res) => {
     console.log('📧 Received email request for:', student?.email);
     
     if (!student || !results) {
-        console.log('❌ Missing student or results');
         return res.status(400).json({ error: 'Missing required fields' });
     }
     
     if (!resend) {
-        console.error('❌ Resend not configured');
-        return res.status(500).json({ error: 'Email service not configured. Please add RESEND_API_KEY to environment variables.' });
+        return res.status(500).json({ error: 'Email service not configured' });
     }
     
     const emailContent = `
@@ -383,7 +492,6 @@ app.post('/api/send-results', async (req, res) => {
             <div style="padding: 20px;">
                 <p><strong>👨‍🎓 Jina la Mwanafunzi:</strong> ${student.fullName}</p>
                 <p><strong>📚 Kozi:</strong> ${student.course}</p>
-                <p><strong>📧 Barua pepe:</strong> ${student.email}</p>
                 <hr/>
                 <h3>📊 Matokeo:</h3>
                 <ul>
@@ -392,17 +500,14 @@ app.post('/api/send-results', async (req, res) => {
                     <li><strong>${results.subject3 || 'N/A'}:</strong> ${results.grade3 || 'N/A'}</li>
                     <li><strong>${results.subject4 || 'N/A'}:</strong> ${results.grade4 || 'N/A'}</li>
                 </ul>
-                <p><strong>💬 Maoni ya Mwalimu:</strong></p>
-                <p style="background: #f0f0f0; padding: 10px; border-radius: 5px;">${results.remarks || 'Hakuna maoni'}</p>
+                <p><strong>💬 Maoni:</strong> ${results.remarks || 'Hakuna maoni'}</p>
                 <hr/>
-                <p style="text-align: center; color: #666; font-size: 12px;">Asante kwa kututumainia<br/>Katwe Secondary School</p>
+                <p style="text-align: center;">Asante,<br/>Katwe Secondary School</p>
             </div>
         </div>
     `;
     
     try {
-        console.log('📧 Sending email to:', student.email);
-        
         const { data, error } = await resend.emails.send({
             from: 'onboarding@resend.dev',
             to: [student.email],
@@ -411,14 +516,14 @@ app.post('/api/send-results', async (req, res) => {
         });
         
         if (error) {
-            console.error('❌ Resend API error:', error);
+            console.error('Resend error:', error);
             return res.status(500).json({ error: error.message });
         }
         
-        console.log('✅ Email sent successfully! ID:', data?.id);
-        res.json({ success: true, message: 'Email sent successfully!', data });
+        console.log('✅ Email sent!');
+        res.json({ success: true, message: 'Email sent successfully!' });
     } catch (error) {
-        console.error('❌ Email sending error:', error.message);
+        console.error('Email error:', error);
         res.status(500).json({ error: error.message });
     }
 });
@@ -426,8 +531,6 @@ app.post('/api/send-results', async (req, res) => {
 // ============ SEND SMS WITH AFRICA'S TALKING ============
 app.post('/api/send-sms', async (req, res) => {
     const { student, results } = req.body;
-    
-    console.log('📱 Received SMS request for:', student?.phone);
     
     if (!student || !results) {
         return res.status(400).json({ error: 'Missing required fields' });
@@ -441,7 +544,6 @@ app.post('/api/send-sms', async (req, res) => {
         return res.status(400).json({ error: 'Student has no phone number' });
     }
     
-    // Format phone number correctly
     let phoneNumber = student.phone.toString().trim();
     phoneNumber = phoneNumber.replace(/\D/g, '');
     if (phoneNumber.startsWith('0')) {
@@ -450,10 +552,7 @@ app.post('/api/send-sms', async (req, res) => {
         phoneNumber = '255' + phoneNumber;
     }
     
-    console.log('📱 Original phone:', student.phone);
-    console.log('📱 Formatted phone:', phoneNumber);
-    
-    const smsContent = `Katwe School: ${student.fullName}, Matokeo: ${results.subject1 || 'N/A'}=${results.grade1 || 'N/A'}, ${results.subject2 || 'N/A'}=${results.grade2 || 'N/A'}. ${results.remarks || 'Asante'}`;
+    const smsContent = `Katwe School: ${student.fullName}, Matokeo: ${results.subject1 || 'N/A'}=${results.grade1 || 'N/A'}. ${results.remarks || 'Asante'}`;
     const finalMessage = smsContent.length > 160 ? smsContent.substring(0, 157) + '...' : smsContent;
     
     try {
@@ -463,19 +562,20 @@ app.post('/api/send-sms', async (req, res) => {
             from: 'sandbox'
         });
         
-        console.log('✅ SMS sent successfully:', result);
-        res.json({ success: true, message: 'SMS sent successfully!', result });
+        console.log('✅ SMS sent!');
+        res.json({ success: true, message: 'SMS sent successfully!' });
     } catch (error) {
-        console.error('❌ SMS error:', error.message);
+        console.error('SMS error:', error);
         res.status(500).json({ error: error.message });
     }
 });
 
-// Start server
+// ============ START SERVER ============
 app.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
     console.log(`✅ Health check: http://localhost:${PORT}/api/health`);
     console.log(`📧 Email endpoint: http://localhost:${PORT}/api/send-results`);
     console.log(`📱 SMS endpoint: http://localhost:${PORT}/api/send-sms`);
     console.log(`👨‍👩‍👧 Parent endpoints: /api/parents/*`);
+    console.log(`📊 Results endpoints: /api/results, /api/parents/:code/results`);
 });
