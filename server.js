@@ -22,12 +22,35 @@ const pool = new Pool({
     ssl: { rejectUnauthorized: false }
 });
 
-// Test database connection
-pool.connect((err, client, release) => {
+// ============ AUTO-CREATE TABLE ============
+const createTable = async () => {
+    try {
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS students (
+                id SERIAL PRIMARY KEY,
+                "fullName" VARCHAR(255) NOT NULL,
+                age INTEGER NOT NULL,
+                gender VARCHAR(10) NOT NULL,
+                course VARCHAR(255) NOT NULL,
+                phone VARCHAR(20),
+                email VARCHAR(255),
+                photo TEXT,
+                "createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+        console.log('✅ Students table is ready');
+    } catch (err) {
+        console.error('❌ Error creating table:', err.message);
+    }
+};
+
+// Test database connection and create table
+pool.connect(async (err, client, release) => {
     if (err) {
-        console.error('❌ Error connecting to database:', err);
+        console.error('❌ Error connecting to database:', err.message);
     } else {
         console.log('✅ Connected to PostgreSQL database');
+        await createTable();
         release();
     }
 });
@@ -61,6 +84,11 @@ const transporter = nodemailer.createTransport({
 });
 
 // ============ API ENDPOINTS ============
+
+// Health check
+app.get('/api/health', (req, res) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
 
 // Upload photo endpoint
 app.post('/api/upload-photo', upload.single('photo'), async (req, res) => {
@@ -205,11 +233,6 @@ app.post('/api/send-results', async (req, res) => {
         console.error('Email error:', error);
         res.status(500).json({ success: false, error: error.message });
     }
-});
-
-// Health check endpoint
-app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 // Start server
