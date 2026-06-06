@@ -5,7 +5,7 @@ const cloudinary = require('cloudinary').v2;
 const multer = require('multer');
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const dotenv = require('dotenv');
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 
 dotenv.config();
 
@@ -73,15 +73,6 @@ const storage = new CloudinaryStorage({
 });
 
 const upload = multer({ storage: storage });
-
-// ============ EMAIL CONFIGURATION ============
-const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-    }
-});
 
 // ============ API ENDPOINTS ============
 
@@ -195,43 +186,70 @@ app.delete('/api/students/:id', async (req, res) => {
     }
 });
 
-// Send results email endpoint
+// ============ SEND EMAIL WITH RESEND ============
 app.post('/api/send-results', async (req, res) => {
     const { student, results } = req.body;
     
+    console.log('📧 Received email request for:', student?.email);
+    
     if (!student || !results) {
-        return res.status(400).json({ message: 'Missing required fields' });
+        console.log('❌ Missing student or results');
+        return res.status(400).json({ error: 'Missing required fields' });
     }
     
+    if (!process.env.RESEND_API_KEY) {
+        console.error('❌ RESEND_API_KEY not configured');
+        return res.status(500).json({ error: 'Email service not configured. Please add RESEND_API_KEY to environment variables.' });
+    }
+    
+    const resend = new Resend(process.env.RESEND_API_KEY);
+    
     const emailContent = `
-        <h2>Katwe Secondary School - Matokeo ya Mitihani</h2>
-        <p><strong>Jina:</strong> ${student.fullName}</p>
-        <p><strong>Kozi:</strong> ${student.course}</p>
-        <hr/>
-        <h3>Matokeo:</h3>
-        <ul>
-            <li><strong>${results.subject1}:</strong> ${results.grade1}</li>
-            <li><strong>${results.subject2}:</strong> ${results.grade2}</li>
-            <li><strong>${results.subject3}:</strong> ${results.grade3}</li>
-            <li><strong>${results.subject4}:</strong> ${results.grade4}</li>
-        </ul>
-        <p><strong>Maoni:</strong> ${results.remarks}</p>
-        <hr/>
-        <p>Asante,<br/>Katwe Secondary School</p>
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px;">
+            <div style="text-align: center; background: linear-gradient(135deg, #1e3c72, #2a5298); padding: 20px; border-radius: 10px 10px 0 0; color: white;">
+                <h2>🏫 Katwe Secondary School</h2>
+                <h3>Matokeo ya Mitihani</h3>
+            </div>
+            <div style="padding: 20px;">
+                <p><strong>👨‍🎓 Jina la Mwanafunzi:</strong> ${student.fullName}</p>
+                <p><strong>📚 Kozi:</strong> ${student.course}</p>
+                <p><strong>📧 Barua pepe:</strong> ${student.email}</p>
+                <hr/>
+                <h3>📊 Matokeo:</h3>
+                <ul>
+                    <li><strong>${results.subject1 || 'N/A'}:</strong> ${results.grade1 || 'N/A'}</li>
+                    <li><strong>${results.subject2 || 'N/A'}:</strong> ${results.grade2 || 'N/A'}</li>
+                    <li><strong>${results.subject3 || 'N/A'}:</strong> ${results.grade3 || 'N/A'}</li>
+                    <li><strong>${results.subject4 || 'N/A'}:</strong> ${results.grade4 || 'N/A'}</li>
+                </ul>
+                <p><strong>💬 Maoni ya Mwalimu:</strong></p>
+                <p style="background: #f0f0f0; padding: 10px; border-radius: 5px;">${results.remarks || 'Hakuna maoni'}</p>
+                <hr/>
+                <p style="text-align: center; color: #666; font-size: 12px;">Asante kwa kututumainia<br/>Katwe Secondary School</p>
+            </div>
+        </div>
     `;
     
     try {
-        await transporter.sendMail({
-            from: process.env.EMAIL_USER,
-            to: student.email,
-            subject: `Matokeo yako - ${student.fullName}`,
+        console.log('📧 Sending email to:', student.email);
+        
+        const { data, error } = await resend.emails.send({
+            from: 'onboarding@resend.dev',
+            to: [student.email],
+            subject: `📧 Matokeo yako - ${student.fullName}`,
             html: emailContent
         });
         
-        res.json({ success: true, message: 'Email sent successfully' });
+        if (error) {
+            console.error('❌ Resend API error:', error);
+            return res.status(500).json({ error: error.message });
+        }
+        
+        console.log('✅ Email sent successfully! ID:', data?.id);
+        res.json({ success: true, message: 'Email sent successfully!', data });
     } catch (error) {
-        console.error('Email error:', error);
-        res.status(500).json({ success: false, error: error.message });
+        console.error('❌ Email sending error:', error.message);
+        res.status(500).json({ error: error.message });
     }
 });
 
