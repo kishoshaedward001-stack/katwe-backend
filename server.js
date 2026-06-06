@@ -77,13 +77,37 @@ const createTables = async () => {
         `);
         console.log('✅ Results table ready');
         
-        // Create index for faster lookups
+        // Create classes table for timetable
         await pool.query(`
-            CREATE INDEX IF NOT EXISTS idx_parents_code ON parents("parentCode")
+            CREATE TABLE IF NOT EXISTS classes (
+                id SERIAL PRIMARY KEY,
+                className VARCHAR(100) NOT NULL UNIQUE,
+                description TEXT,
+                "createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
         `);
+        console.log('✅ Classes table ready');
+        
+        // Create timetables table
         await pool.query(`
-            CREATE INDEX IF NOT EXISTS idx_results_student ON results("studentId")
+            CREATE TABLE IF NOT EXISTS timetables (
+                id SERIAL PRIMARY KEY,
+                classId INTEGER REFERENCES classes(id) ON DELETE CASCADE,
+                dayOfWeek VARCHAR(20) NOT NULL,
+                startTime TIME NOT NULL,
+                endTime TIME NOT NULL,
+                subject VARCHAR(100) NOT NULL,
+                teacher VARCHAR(100),
+                room VARCHAR(50),
+                "createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
         `);
+        console.log('✅ Timetables table ready');
+        
+        // Create indexes for faster lookups
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_parents_code ON parents("parentCode")`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_results_student ON results("studentId")`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_timetables_class ON timetables("classId")`);
         console.log('✅ Indexes created');
         
     } catch (err) {
@@ -469,6 +493,98 @@ app.delete('/api/results/:id', async (req, res) => {
     }
 });
 
+// ============ TIMETABLE ENDPOINTS ============
+
+// Get all classes
+app.get('/api/classes', async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM classes ORDER BY className');
+        res.json(result.rows);
+    } catch (err) {
+        console.error('Error fetching classes:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Add new class
+app.post('/api/classes', async (req, res) => {
+    const { className, description } = req.body;
+    
+    if (!className) {
+        return res.status(400).json({ error: 'Class name is required' });
+    }
+    
+    try {
+        const result = await pool.query(
+            'INSERT INTO classes (className, description) VALUES ($1, $2) RETURNING *',
+            [className, description || null]
+        );
+        res.json({ success: true, class: result.rows[0] });
+    } catch (err) {
+        console.error('Error adding class:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Delete class
+app.delete('/api/classes/:id', async (req, res) => {
+    try {
+        await pool.query('DELETE FROM classes WHERE id = $1', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Error deleting class:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Get timetable for a class
+app.get('/api/timetable/:classId', async (req, res) => {
+    const { classId } = req.params;
+    try {
+        const result = await pool.query(
+            'SELECT * FROM timetables WHERE classId = $1 ORDER BY dayOfWeek, startTime',
+            [classId]
+        );
+        res.json(result.rows);
+    } catch (err) {
+        console.error('Error fetching timetable:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Add or update timetable entry
+app.post('/api/timetable', async (req, res) => {
+    const { classId, dayOfWeek, startTime, endTime, subject, teacher, room } = req.body;
+    
+    if (!classId || !dayOfWeek || !startTime || !endTime || !subject) {
+        return res.status(400).json({ error: 'Missing required fields' });
+    }
+    
+    try {
+        const result = await pool.query(
+            `INSERT INTO timetables (classId, dayOfWeek, startTime, endTime, subject, teacher, room) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7) 
+             RETURNING *`,
+            [classId, dayOfWeek, startTime, endTime, subject, teacher || null, room || null]
+        );
+        res.json({ success: true, entry: result.rows[0] });
+    } catch (err) {
+        console.error('Error adding timetable entry:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Delete timetable entry
+app.delete('/api/timetable/:id', async (req, res) => {
+    try {
+        await pool.query('DELETE FROM timetables WHERE id = $1', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Error deleting timetable entry:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // ============ SEND EMAIL WITH RESEND ============
 app.post('/api/send-results', async (req, res) => {
     const { student, results } = req.body;
@@ -578,4 +694,5 @@ app.listen(PORT, () => {
     console.log(`📱 SMS endpoint: http://localhost:${PORT}/api/send-sms`);
     console.log(`👨‍👩‍👧 Parent endpoints: /api/parents/*`);
     console.log(`📊 Results endpoints: /api/results, /api/parents/:code/results`);
+    console.log(`📅 Timetable endpoints: /api/classes, /api/timetable/*`);
 });
