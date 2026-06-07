@@ -118,6 +118,17 @@ await pool.query(`
     )
 `);
 console.log('✅ Users table ready');
+await pool.query(`
+    CREATE TABLE IF NOT EXISTS announcements (
+        id SERIAL PRIMARY KEY,
+        title VARCHAR(255) NOT NULL,
+        content TEXT NOT NULL,
+        author VARCHAR(100),
+        isActive BOOLEAN DEFAULT TRUE,
+        priority VARCHAR(20) DEFAULT 'medium',
+        "createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+`);
         
         // Create indexes for faster lookups
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_parents_code ON parents("parentCode")`);
@@ -819,6 +830,94 @@ app.delete('/api/users/:id', async (req, res) => {
         console.error('Error deleting user:', err);
         res.status(500).json({ error: err.message });
     }
+});
+// ============ ANNOUNCEMENTS ENDPOINTS ============
+
+// Get all announcements (active first)
+app.get('/api/announcements', (req, res) => {
+    db.query(
+        'SELECT * FROM announcements ORDER BY isActive DESC, createdAt DESC',
+        (err, results) => {
+            if (err) {
+                console.error('Error fetching announcements:', err);
+                return res.status(500).json({ error: err.message });
+            }
+            res.json(results);
+        }
+    );
+});
+
+// Get single announcement
+app.get('/api/announcements/:id', (req, res) => {
+    db.query('SELECT * FROM announcements WHERE id = ?', [req.params.id], (err, result) => {
+        if (err) {
+            console.error('Error fetching announcement:', err);
+            return res.status(500).json({ error: err.message });
+        }
+        if (result.length === 0) {
+            return res.status(404).json({ message: 'Announcement not found' });
+        }
+        res.json(result[0]);
+    });
+});
+
+// Create announcement (admin only)
+app.post('/api/announcements', (req, res) => {
+    const { title, content, author, priority } = req.body;
+    
+    if (!title || !content) {
+        return res.status(400).json({ error: 'Title and content are required' });
+    }
+    
+    db.query(
+        'INSERT INTO announcements (title, content, author, priority) VALUES (?, ?, ?, ?)',
+        [title, content, author || 'Admin', priority || 'medium'],
+        (err, result) => {
+            if (err) {
+                console.error('Error creating announcement:', err);
+                return res.status(500).json({ error: err.message });
+            }
+            res.status(201).json({ 
+                success: true, 
+                message: 'Announcement created successfully',
+                id: result.insertId 
+            });
+        }
+    );
+});
+
+// Update announcement (admin only)
+app.put('/api/announcements/:id', (req, res) => {
+    const { title, content, isActive } = req.body;
+    
+    db.query(
+        'UPDATE announcements SET title = ?, content = ?, isActive = ? WHERE id = ?',
+        [title, content, isActive, req.params.id],
+        (err, result) => {
+            if (err) {
+                console.error('Error updating announcement:', err);
+                return res.status(500).json({ error: err.message });
+            }
+            if (result.affectedRows === 0) {
+                return res.status(404).json({ message: 'Announcement not found' });
+            }
+            res.json({ success: true, message: 'Announcement updated successfully' });
+        }
+    );
+});
+
+// Delete announcement (admin only)
+app.delete('/api/announcements/:id', (req, res) => {
+    db.query('DELETE FROM announcements WHERE id = ?', [req.params.id], (err, result) => {
+        if (err) {
+            console.error('Error deleting announcement:', err);
+            return res.status(500).json({ error: err.message });
+        }
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: 'Announcement not found' });
+        }
+        res.json({ success: true, message: 'Announcement deleted successfully' });
+    });
 });
 
 // ============ START SERVER ============
