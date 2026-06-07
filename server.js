@@ -1,165 +1,181 @@
 const express = require('express');
 const cors = require('cors');
-const { Pool } = require('pg');
+const sqlite3 = require('sqlite3').verbose();
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+const rateLimit = require('express-rate-limit');
+const helmet = require('helmet');
+const { body, validationResult } = require('express-validator');
 const cloudinary = require('cloudinary').v2;
 const multer = require('multer');
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const dotenv = require('dotenv');
 const { Resend } = require('resend');
 const africastalking = require('africastalking');
+const path = require('path');
 
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5003;
+const JWT_SECRET = process.env.JWT_SECRET || 'katwe_super_secret_key_change_this';
 
-// Middleware
-app.use(cors());
-app.use(express.json());
+// ============ SECURITY MIDDLEWARE ============
+app.use(helmet()); // Security headers
+app.use(cors({
+    origin: ['http://localhost:3000', 'https://katwe-frontend.onrender.com'],
+    credentials: true
+}));
+app.use(express.json({ limit: '10mb' }));
 
-// ============ DATABASE CONNECTION ============
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false }
+// Rate limiting - kuzuia mashambulizi
+const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100, // Max 100 requests per windowMs
+    message: { error: 'Too many requests, please try again later.' }
+});
+app.use('/api/', limiter);
+
+// Stricter rate limit for login
+const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 5,
+    message: { error: 'Too many login attempts, please try again after 15 minutes.' }
 });
 
-// ============ AUTO-CREATE TABLES ============
-const createTables = async () => {
+// ============ SQLITE DATABASE ============
+const db = new sqlite3.Database('./katwe_school.db');
+
+// ============ CREATE TABLES ============
+db.serialize(() => {
+    // Users table with better security
+    db.run(`CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE NOT NULL,
+        email TEXT UNIQUE NOT NULL,
+        password TEXT NOT NULL,
+        fullName TEXT,
+        phone TEXT,
+        role TEXT DEFAULT 'user',
+        isApproved INTEGER DEFAULT 0,
+        isVerified INTEGER DEFAULT 0,
+        verificationToken TEXT,
+        resetToken TEXT,
+        resetTokenExpiry INTEGER,
+        lastLogin DATETIME,
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+    
+    // Other tables (students, parents, results, classes, timetables)
+    db.run(`CREATE TABLE IF NOT EXISTS students (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        fullName TEXT NOT NULL,
+        age INTEGER NOT NULL,
+        gender TEXT NOT NULL,
+        course TEXT NOT NULL,
+        phone TEXT,
+        email TEXT,
+        photo TEXT,
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+    
+    db.run(`CREATE TABLE IF NOT EXISTS parents (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        parentCode TEXT UNIQUE NOT NULL,
+        parentName TEXT NOT NULL,
+        phone TEXT,
+        email TEXT,
+        studentId INTEGER,
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (studentId) REFERENCES students(id) ON DELETE CASCADE
+    )`);
+    
+    db.run(`CREATE TABLE IF NOT EXISTS results (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        studentId INTEGER,
+        subject1 TEXT,
+        grade1 TEXT,
+        subject2 TEXT,
+        grade2 TEXT,
+        subject3 TEXT,
+        grade3 TEXT,
+        subject4 TEXT,
+        grade4 TEXT,
+        remarks TEXT,
+        term TEXT,
+        year INTEGER,
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (studentId) REFERENCES students(id) ON DELETE CASCADE
+    )`);
+    
+    db.run(`CREATE TABLE IF NOT EXISTS classes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        className TEXT UNIQUE NOT NULL,
+        description TEXT,
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+    
+    db.run(`CREATE TABLE IF NOT EXISTS timetables (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        classId INTEGER,
+        dayOfWeek TEXT NOT NULL,
+        startTime TEXT NOT NULL,
+        endTime TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        teacher TEXT,
+        room TEXT,
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (classId) REFERENCES classes(id) ON DELETE CASCADE
+    )`);
+    
+    // Sessions table for tracking logins
+    db.run(`CREATE TABLE IF NOT EXISTS sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        userId INTEGER,
+        token TEXT,
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+        expiresAt DATETIME
+    )`);
+    
+    console.log('✅ All tables ready');
+});
+
+// ============ HELPER FUNCTIONS ============
+const generateToken = (userId, username, role) => {
+    return jwt.sign({ userId, username, role }, JWT_SECRET, { expiresIn: '7d' });
+};
+
+const verifyToken = (req, res, next) => {
+    const token = req.headers['authorization']?.split(' ')[1];
+    
+    if (!token) {
+        return res.status(401).json({ error: 'Access denied. No token provided.' });
+    }
+    
     try {
-        // Create students table
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS students (
-                id SERIAL PRIMARY KEY,
-                "fullName" VARCHAR(255) NOT NULL,
-                age INTEGER NOT NULL,
-                gender VARCHAR(10) NOT NULL,
-                course VARCHAR(255) NOT NULL,
-                phone VARCHAR(20),
-                email VARCHAR(255),
-                photo TEXT,
-                "createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        `);
-        console.log('✅ Students table ready');
-        
-        // Create parents table
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS parents (
-                id SERIAL PRIMARY KEY,
-                "parentCode" VARCHAR(20) UNIQUE NOT NULL,
-                "parentName" VARCHAR(255) NOT NULL,
-                phone VARCHAR(20),
-                email VARCHAR(255),
-                "studentId" INTEGER REFERENCES students(id) ON DELETE CASCADE,
-                "createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        `);
-        console.log('✅ Parents table ready');
-        
-        // Create results table
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS results (
-                id SERIAL PRIMARY KEY,
-                "studentId" INTEGER REFERENCES students(id) ON DELETE CASCADE,
-                subject1 VARCHAR(100),
-                grade1 VARCHAR(5),
-                subject2 VARCHAR(100),
-                grade2 VARCHAR(5),
-                subject3 VARCHAR(100),
-                grade3 VARCHAR(5),
-                subject4 VARCHAR(100),
-                grade4 VARCHAR(5),
-                remarks TEXT,
-                term VARCHAR(20),
-                year INTEGER,
-                "createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        `);
-        console.log('✅ Results table ready');
-        
-        // Create classes table for timetable
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS classes (
-                id SERIAL PRIMARY KEY,
-                className VARCHAR(100) NOT NULL UNIQUE,
-                description TEXT,
-                "createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        `);
-        console.log('✅ Classes table ready');
-        
-        // Create timetables table
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS timetables (
-                id SERIAL PRIMARY KEY,
-                classId INTEGER REFERENCES classes(id) ON DELETE CASCADE,
-                dayOfWeek VARCHAR(20) NOT NULL,
-                startTime TIME NOT NULL,
-                endTime TIME NOT NULL,
-                subject VARCHAR(100) NOT NULL,
-                teacher VARCHAR(100),
-                room VARCHAR(50),
-                "createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        `);
-        console.log('✅ Timetables table ready');
-        // Create users table
-await pool.query(`
-    CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
-        username VARCHAR(100) UNIQUE NOT NULL,
-        email VARCHAR(255) UNIQUE NOT NULL,
-        password VARCHAR(255) NOT NULL,
-        fullName VARCHAR(255),
-        phone VARCHAR(20),
-        role VARCHAR(20) DEFAULT 'user',
-        isApproved BOOLEAN DEFAULT FALSE,
-        "createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-`);
-console.log('✅ Users table ready');
-await pool.query(`
-    CREATE TABLE IF NOT EXISTS announcements (
-        id SERIAL PRIMARY KEY,
-        title VARCHAR(255) NOT NULL,
-        content TEXT NOT NULL,
-        author VARCHAR(100),
-        isActive BOOLEAN DEFAULT TRUE,
-        priority VARCHAR(20) DEFAULT 'medium',
-        "createdAt" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-`);
-        
-        // Create indexes for faster lookups
-        await pool.query(`CREATE INDEX IF NOT EXISTS idx_parents_code ON parents("parentCode")`);
-        await pool.query(`CREATE INDEX IF NOT EXISTS idx_results_student ON results("studentId")`);
-        await pool.query(`CREATE INDEX IF NOT EXISTS idx_timetables_class ON timetables("classId")`);
-        console.log('✅ Indexes created');
-        
-    } catch (err) {
-        console.error('❌ Error creating tables:', err.message);
+        const decoded = jwt.verify(token, JWT_SECRET);
+        req.user = decoded;
+        next();
+    } catch (error) {
+        return res.status(401).json({ error: 'Invalid or expired token.' });
     }
 };
 
-// Test database connection and create tables
-pool.connect(async (err, client, release) => {
-    if (err) {
-        console.error('❌ Error connecting to database:', err.message);
-    } else {
-        console.log('✅ Connected to PostgreSQL database');
-        await createTables();
-        release();
+// Admin only middleware
+const isAdmin = (req, res, next) => {
+    if (req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Access denied. Admin only.' });
     }
-});
+    next();
+};
 
-// ============ CLOUDINARY CONFIGURATION ============
+// ============ CLOUDINARY ============
 cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
     api_key: process.env.CLOUDINARY_API_KEY,
     api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-// Configure multer for Cloudinary
 const storage = new CloudinaryStorage({
     cloudinary: cloudinary,
     params: {
@@ -171,7 +187,7 @@ const storage = new CloudinaryStorage({
 
 const upload = multer({ storage: storage });
 
-// ============ AFRICA'S TALKING SMS ============
+// ============ SMS & EMAIL ============
 let sms = null;
 if (process.env.AFRICASTALKING_API_KEY && process.env.AFRICASTALKING_USERNAME) {
     const africasTalking = africastalking({
@@ -179,755 +195,353 @@ if (process.env.AFRICASTALKING_API_KEY && process.env.AFRICASTALKING_USERNAME) {
         username: process.env.AFRICASTALKING_USERNAME
     });
     sms = africasTalking.SMS;
-    console.log('✅ Africa\'s Talking SMS initialized');
-} else {
-    console.log('⚠️ Africa\'s Talking credentials not set. SMS disabled.');
 }
 
-// ============ RESEND EMAIL ============
 let resend = null;
 if (process.env.RESEND_API_KEY) {
     resend = new Resend(process.env.RESEND_API_KEY);
-    console.log('✅ Resend email initialized');
-} else {
-    console.log('⚠️ Resend API key not set. Email disabled.');
 }
 
-// ============ API ENDPOINTS ============
+// ============ AUTH ENDPOINTS ============
 
-// Health check
-app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok', timestamp: new Date().toISOString() });
-});
-
-// Upload photo endpoint
-app.post('/api/upload-photo', upload.single('photo'), async (req, res) => {
-    try {
-        if (!req.file) {
-            return res.status(400).json({ success: false, error: 'No file uploaded' });
-        }
-        res.json({ 
-            success: true, 
-            imageUrl: req.file.path,
-            publicId: req.file.filename
-        });
-    } catch (error) {
-        console.error('Upload error:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// GET all students
-app.get('/api/students', async (req, res) => {
-    try {
-        const result = await pool.query('SELECT * FROM students ORDER BY "createdAt" DESC');
-        res.json(result.rows);
-    } catch (err) {
-        console.error('Error fetching students:', err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// GET single student
-app.get('/api/students/:id', async (req, res) => {
-    try {
-        const result = await pool.query('SELECT * FROM students WHERE id = $1', [req.params.id]);
-        if (result.rows.length === 0) {
-            return res.status(404).json({ message: 'Student not found' });
-        }
-        res.json(result.rows[0]);
-    } catch (err) {
-        console.error('Error fetching student:', err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// POST new student
-app.post('/api/students', async (req, res) => {
-    const { fullName, age, gender, course, phone, email, photo } = req.body;
-    
-    if (!fullName || !age || !gender || !course) {
-        return res.status(400).json({ message: 'Missing required fields: fullName, age, gender, course' });
+// User registration with validation
+app.post('/api/auth/register', [
+    body('username').isLength({ min: 3 }).trim().escape(),
+    body('email').isEmail().normalizeEmail(),
+    body('password').isLength({ min: 6 }),
+    body('fullName').optional().trim().escape()
+], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
     }
     
-    try {
-        const result = await pool.query(
-            `INSERT INTO students ("fullName", age, gender, course, phone, email, photo) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7) 
-             RETURNING *`,
-            [fullName, age, gender, course, phone || null, email || null, photo || null]
-        );
-        res.status(201).json(result.rows[0]);
-    } catch (err) {
-        console.error('Error creating student:', err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// PUT update student
-app.put('/api/students/:id', async (req, res) => {
-    const { fullName, age, gender, course, phone, email, photo } = req.body;
-    try {
-        const result = await pool.query(
-            `UPDATE students SET 
-                "fullName" = $1, 
-                age = $2, 
-                gender = $3, 
-                course = $4, 
-                phone = $5, 
-                email = $6, 
-                photo = $7 
-             WHERE id = $8 
-             RETURNING *`,
-            [fullName, age, gender, course, phone, email, photo, req.params.id]
-        );
-        if (result.rows.length === 0) {
-            return res.status(404).json({ message: 'Student not found' });
-        }
-        res.json({ message: 'Student updated successfully', student: result.rows[0] });
-    } catch (err) {
-        console.error('Error updating student:', err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// DELETE student
-app.delete('/api/students/:id', async (req, res) => {
-    try {
-        const result = await pool.query('DELETE FROM students WHERE id = $1 RETURNING *', [req.params.id]);
-        if (result.rows.length === 0) {
-            return res.status(404).json({ message: 'Student not found' });
-        }
-        res.json({ message: 'Student deleted successfully' });
-    } catch (err) {
-        console.error('Error deleting student:', err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// ============ PARENT MODULE ENDPOINTS ============
-
-// Generate parent code
-app.post('/api/parents/generate', async (req, res) => {
-    const { studentId, parentName, phone, email } = req.body;
-    
-    if (!studentId || !parentName) {
-        return res.status(400).json({ error: 'Student ID and Parent Name are required' });
-    }
-    
-    const parentCode = Math.floor(100000 + Math.random() * 900000).toString();
-    
-    try {
-        const existing = await pool.query(
-            'SELECT * FROM parents WHERE "studentId" = $1',
-            [studentId]
-        );
-        
-        if (existing.rows.length > 0) {
-            return res.json({ 
-                success: true, 
-                parentCode: existing.rows[0].parentCode,
-                message: 'Parent code already exists',
-                parent: existing.rows[0]
-            });
-        }
-        
-        const result = await pool.query(
-            `INSERT INTO parents ("parentCode", "parentName", phone, email, "studentId") 
-             VALUES ($1, $2, $3, $4, $5) 
-             RETURNING *`,
-            [parentCode, parentName, phone || null, email || null, studentId]
-        );
-        
-        res.json({ success: true, parentCode, parent: result.rows[0] });
-    } catch (err) {
-        console.error('Error generating parent code:', err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// Parent login
-app.post('/api/parents/login', async (req, res) => {
-    const { parentCode } = req.body;
-    
-    if (!parentCode) {
-        return res.status(400).json({ error: 'Parent code is required' });
-    }
-    
-    try {
-        const result = await pool.query(
-            `SELECT p.*, s."fullName" as "studentName", s.course, s.photo, s.age, s.gender, s.phone as "studentPhone", s.email as "studentEmail"
-             FROM parents p
-             JOIN students s ON p."studentId" = s.id
-             WHERE p."parentCode" = $1`,
-            [parentCode]
-        );
-        
-        if (result.rows.length === 0) {
-            return res.status(401).json({ error: 'Invalid parent code' });
-        }
-        
-        const parent = result.rows[0];
-        res.json({ 
-            success: true, 
-            parent: {
-                parentcode: parent.parentCode,
-                parentname: parent.parentName,
-                phone: parent.phone,
-                email: parent.email,
-                studentId: parent.studentId,
-                studentName: parent.studentName,
-                course: parent.course,
-                photo: parent.photo,
-                age: parent.age,
-                gender: parent.gender
-            }
-        });
-    } catch (err) {
-        console.error('Parent login error:', err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// Get student info for parent
-app.get('/api/parents/:parentCode/student', async (req, res) => {
-    const { parentCode } = req.params;
-    
-    try {
-        const result = await pool.query(
-            `SELECT s.* 
-             FROM students s
-             JOIN parents p ON p."studentId" = s.id
-             WHERE p."parentCode" = $1`,
-            [parentCode]
-        );
-        
-        if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'Student not found' });
-        }
-        
-        res.json({ success: true, student: result.rows[0] });
-    } catch (err) {
-        console.error('Error fetching student:', err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// Get all parents (for admin)
-app.get('/api/parents', async (req, res) => {
-    try {
-        const result = await pool.query(
-            `SELECT p.*, s."fullName" as "studentName" 
-             FROM parents p
-             JOIN students s ON p."studentId" = s.id
-             ORDER BY p."createdAt" DESC`
-        );
-        res.json(result.rows);
-    } catch (err) {
-        console.error('Error fetching parents:', err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// Delete parent by id
-app.delete('/api/parents/:id', async (req, res) => {
-    try {
-        await pool.query('DELETE FROM parents WHERE id = $1', [req.params.id]);
-        res.json({ success: true, message: 'Parent deleted successfully' });
-    } catch (err) {
-        console.error('Error deleting parent:', err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// ============ RESULTS ENDPOINTS ============
-
-// Get student results for parent
-app.get('/api/parents/:parentCode/results', async (req, res) => {
-    const { parentCode } = req.params;
-    
-    try {
-        const parentResult = await pool.query(
-            `SELECT "studentId" FROM parents WHERE "parentCode" = $1`,
-            [parentCode]
-        );
-        
-        if (parentResult.rows.length === 0) {
-            return res.status(404).json({ error: 'Parent not found' });
-        }
-        
-        const studentId = parentResult.rows[0].studentId;
-        
-        const results = await pool.query(
-            `SELECT * FROM results WHERE "studentId" = $1 ORDER BY year DESC, term DESC`,
-            [studentId]
-        );
-        
-        res.json({ success: true, results: results.rows });
-    } catch (err) {
-        console.error('Error fetching results:', err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// Save results (for admin/teacher)
-app.post('/api/results', async (req, res) => {
-    const { studentId, subject1, grade1, subject2, grade2, subject3, grade3, subject4, grade4, remarks, term, year } = req.body;
-    
-    if (!studentId) {
-        return res.status(400).json({ error: 'Student ID is required' });
-    }
-    
-    try {
-        const result = await pool.query(
-            `INSERT INTO results ("studentId", subject1, grade1, subject2, grade2, subject3, grade3, subject4, grade4, remarks, term, year) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) 
-             RETURNING *`,
-            [studentId, subject1 || null, grade1 || null, subject2 || null, grade2 || null, subject3 || null, grade3 || null, subject4 || null, grade4 || null, remarks || null, term || 'Term 1', year || new Date().getFullYear()]
-        );
-        res.json({ success: true, result: result.rows[0] });
-    } catch (err) {
-        console.error('Error saving results:', err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// Get results for a specific student (for admin)
-app.get('/api/students/:studentId/results', async (req, res) => {
-    const { studentId } = req.params;
-    
-    try {
-        const results = await pool.query(
-            `SELECT * FROM results WHERE "studentId" = $1 ORDER BY year DESC, term DESC`,
-            [studentId]
-        );
-        res.json({ success: true, results: results.rows });
-    } catch (err) {
-        console.error('Error fetching results:', err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// Delete result by id
-app.delete('/api/results/:id', async (req, res) => {
-    try {
-        await pool.query('DELETE FROM results WHERE id = $1', [req.params.id]);
-        res.json({ success: true, message: 'Result deleted successfully' });
-    } catch (err) {
-        console.error('Error deleting result:', err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// ============ TIMETABLE ENDPOINTS ============
-
-// Get all classes
-app.get('/api/classes', async (req, res) => {
-    try {
-        const result = await pool.query('SELECT * FROM classes ORDER BY className');
-        res.json(result.rows);
-    } catch (err) {
-        console.error('Error fetching classes:', err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// Add new class
-app.post('/api/classes', async (req, res) => {
-    const { className, description } = req.body;
-    
-    if (!className) {
-        return res.status(400).json({ error: 'Class name is required' });
-    }
-    
-    try {
-        const result = await pool.query(
-            'INSERT INTO classes (className, description) VALUES ($1, $2) RETURNING *',
-            [className, description || null]
-        );
-        res.json({ success: true, class: result.rows[0] });
-    } catch (err) {
-        console.error('Error adding class:', err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// Delete class
-app.delete('/api/classes/:id', async (req, res) => {
-    try {
-        await pool.query('DELETE FROM classes WHERE id = $1', [req.params.id]);
-        res.json({ success: true });
-    } catch (err) {
-        console.error('Error deleting class:', err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// Get timetable for a class
-app.get('/api/timetable/:classId', async (req, res) => {
-    const { classId } = req.params;
-    try {
-        const result = await pool.query(
-            'SELECT * FROM timetables WHERE classId = $1 ORDER BY dayOfWeek, startTime',
-            [classId]
-        );
-        res.json(result.rows);
-    } catch (err) {
-        console.error('Error fetching timetable:', err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// Add or update timetable entry
-app.post('/api/timetable', async (req, res) => {
-    const { classId, dayOfWeek, startTime, endTime, subject, teacher, room } = req.body;
-    
-    if (!classId || !dayOfWeek || !startTime || !endTime || !subject) {
-        return res.status(400).json({ error: 'Missing required fields' });
-    }
-    
-    try {
-        const result = await pool.query(
-            `INSERT INTO timetables (classId, dayOfWeek, startTime, endTime, subject, teacher, room) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7) 
-             RETURNING *`,
-            [classId, dayOfWeek, startTime, endTime, subject, teacher || null, room || null]
-        );
-        res.json({ success: true, entry: result.rows[0] });
-    } catch (err) {
-        console.error('Error adding timetable entry:', err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// Delete timetable entry
-app.delete('/api/timetable/:id', async (req, res) => {
-    try {
-        await pool.query('DELETE FROM timetables WHERE id = $1', [req.params.id]);
-        res.json({ success: true });
-    } catch (err) {
-        console.error('Error deleting timetable entry:', err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// ============ SEND EMAIL WITH RESEND ============
-app.post('/api/send-results', async (req, res) => {
-    const { student, results } = req.body;
-    
-    console.log('📧 Received email request for:', student?.email);
-    
-    if (!student || !results) {
-        return res.status(400).json({ error: 'Missing required fields' });
-    }
-    
-    if (!resend) {
-        return res.status(500).json({ error: 'Email service not configured' });
-    }
-    
-    const emailContent = `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px;">
-            <div style="text-align: center; background: linear-gradient(135deg, #1e3c72, #2a5298); padding: 20px; border-radius: 10px 10px 0 0; color: white;">
-                <h2>🏫 Katwe Secondary School</h2>
-                <h3>Matokeo ya Mitihani</h3>
-            </div>
-            <div style="padding: 20px;">
-                <p><strong>👨‍🎓 Jina la Mwanafunzi:</strong> ${student.fullName}</p>
-                <p><strong>📚 Kozi:</strong> ${student.course}</p>
-                <hr/>
-                <h3>📊 Matokeo:</h3>
-                <ul>
-                    <li><strong>${results.subject1 || 'N/A'}:</strong> ${results.grade1 || 'N/A'}</li>
-                    <li><strong>${results.subject2 || 'N/A'}:</strong> ${results.grade2 || 'N/A'}</li>
-                    <li><strong>${results.subject3 || 'N/A'}:</strong> ${results.grade3 || 'N/A'}</li>
-                    <li><strong>${results.subject4 || 'N/A'}:</strong> ${results.grade4 || 'N/A'}</li>
-                </ul>
-                <p><strong>💬 Maoni:</strong> ${results.remarks || 'Hakuna maoni'}</p>
-                <hr/>
-                <p style="text-align: center;">Asante,<br/>Katwe Secondary School</p>
-            </div>
-        </div>
-    `;
-    
-    try {
-        const { data, error } = await resend.emails.send({
-            from: 'onboarding@resend.dev',
-            to: [student.email],
-            subject: `📧 Matokeo yako - ${student.fullName}`,
-            html: emailContent
-        });
-        
-        if (error) {
-            console.error('Resend error:', error);
-            return res.status(500).json({ error: error.message });
-        }
-        
-        console.log('✅ Email sent!');
-        res.json({ success: true, message: 'Email sent successfully!' });
-    } catch (error) {
-        console.error('Email error:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// ============ SEND SMS WITH AFRICA'S TALKING ============
-app.post('/api/send-sms', async (req, res) => {
-    const { student, results } = req.body;
-    
-    if (!student || !results) {
-        return res.status(400).json({ error: 'Missing required fields' });
-    }
-    
-    if (!sms) {
-        return res.status(500).json({ error: 'SMS service not configured' });
-    }
-    
-    if (!student.phone) {
-        return res.status(400).json({ error: 'Student has no phone number' });
-    }
-    
-    let phoneNumber = student.phone.toString().trim();
-    phoneNumber = phoneNumber.replace(/\D/g, '');
-    if (phoneNumber.startsWith('0')) {
-        phoneNumber = '255' + phoneNumber.substring(1);
-    } else if (!phoneNumber.startsWith('255')) {
-        phoneNumber = '255' + phoneNumber;
-    }
-    
-    const smsContent = `Katwe School: ${student.fullName}, Matokeo: ${results.subject1 || 'N/A'}=${results.grade1 || 'N/A'}. ${results.remarks || 'Asante'}`;
-    const finalMessage = smsContent.length > 160 ? smsContent.substring(0, 157) + '...' : smsContent;
-    
-    try {
-        const result = await sms.send({
-            to: phoneNumber,
-            message: finalMessage,
-            from: 'sandbox'
-        });
-        
-        console.log('✅ SMS sent!');
-        res.json({ success: true, message: 'SMS sent successfully!' });
-    } catch (error) {
-        console.error('SMS error:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-// ============ USER REGISTRATION ENDPOINTS ============
-
-// User registration
-app.post('/api/auth/register', async (req, res) => {
     const { username, email, password, fullName, phone } = req.body;
     
-    if (!username || !email || !password) {
-        return res.status(400).json({ error: 'Username, email and password are required' });
-    }
-    
     try {
-        // Check if user exists
-        const existing = await pool.query(
-            'SELECT * FROM users WHERE username = $1 OR email = $2',
-            [username, email]
+        // Hash password with bcrypt
+        const hashedPassword = await bcrypt.hash(password, 10);
+        const verificationToken = crypto.randomBytes(32).toString('hex');
+        
+        db.run(
+            `INSERT INTO users (username, email, password, fullName, phone, verificationToken) 
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [username, email, hashedPassword, fullName, phone, verificationToken],
+            function(err) {
+                if (err) {
+                    if (err.message.includes('UNIQUE')) {
+                        return res.status(400).json({ error: 'Username or email already exists' });
+                    }
+                    return res.status(500).json({ error: err.message });
+                }
+                
+                // Send verification email
+                if (resend && email) {
+                    const verificationUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/verify/${verificationToken}`;
+                    resend.emails.send({
+                        from: 'onboarding@resend.dev',
+                        to: [email],
+                        subject: 'Verify your email - Katwe School',
+                        html: `<p>Click <a href="${verificationUrl}">here</a> to verify your email.</p>`
+                    });
+                }
+                
+                res.json({ success: true, message: 'Registration successful! Please verify your email.' });
+            }
         );
-        
-        if (existing.rows.length > 0) {
-            return res.status(400).json({ error: 'Username or email already exists' });
-        }
-        
-        // Simple password hashing (for production, use bcrypt)
-        const hashedPassword = Buffer.from(password).toString('base64');
-        
-        const result = await pool.query(
-            `INSERT INTO users (username, email, password, fullName, phone, role, isApproved) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7) 
-             RETURNING id, username, email, fullName, role, isApproved`,
-            [username, email, hashedPassword, fullName || null, phone || null, 'user', false]
-        );
-        
-        res.json({ 
-            success: true, 
-            message: 'Registration successful! Please wait for admin approval.',
-            user: result.rows[0]
-        });
-    } catch (err) {
-        console.error('Registration error:', err);
-        res.status(500).json({ error: err.message });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
     }
 });
 
-
-// User login (with approval check)
-app.post('/api/auth/login', (req, res) => {
+// User login with rate limiting
+app.post('/api/auth/login', loginLimiter, async (req, res) => {
     const { username, password } = req.body;
     
     if (!username || !password) {
         return res.status(400).json({ error: 'Username and password are required' });
     }
     
-    const hashedPassword = Buffer.from(password).toString('base64');
+    db.get('SELECT * FROM users WHERE username = ?', [username], async (err, user) => {
+        if (err) return res.status(500).json({ error: err.message });
+        if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+        
+        // Compare password with bcrypt
+        const validPassword = await bcrypt.compare(password, user.password);
+        if (!validPassword) return res.status(401).json({ error: 'Invalid credentials' });
+        
+        if (!user.isApproved) {
+            return res.status(401).json({ error: 'Account pending approval' });
+        }
+        
+        // Update last login
+        db.run('UPDATE users SET lastLogin = CURRENT_TIMESTAMP WHERE id = ?', [user.id]);
+        
+        // Generate JWT token
+        const token = generateToken(user.id, user.username, user.role);
+        
+        // Store session
+        db.run('INSERT INTO sessions (userId, token, expiresAt) VALUES (?, ?, datetime("now", "+7 days"))', 
+            [user.id, token]);
+        
+        res.json({
+            success: true,
+            token,
+            user: {
+                id: user.id,
+                username: user.username,
+                email: user.email,
+                fullName: user.fullName,
+                role: user.role,
+                isApproved: user.isApproved
+            }
+        });
+    });
+});
+
+// Verify email
+app.get('/api/auth/verify/:token', (req, res) => {
+    const { token } = req.params;
     
-    db.query(
-        'SELECT * FROM users WHERE username = ? AND password = ?',
-        [username, hashedPassword],
-        (err, result) => {
-            if (err) {
-                console.error('Login error:', err);
-                return res.status(500).json({ error: err.message });
-            }
-            
-            if (result.length === 0) {
-                return res.status(401).json({ error: 'Invalid username or password' });
-            }
-            
-            const user = result[0];
-            
-            if (!user.isApproved) {
-                return res.status(401).json({ error: 'Your account is pending approval. Please wait for admin to approve.' });
-            }
-            
-            res.json({ 
-                success: true, 
-                user: {
-                    id: user.id,
-                    username: user.username,
-                    email: user.email,
-                    fullName: user.fullName,
-                    role: user.role,
-                    isApproved: user.isApproved
-                }
-            });
+    db.run('UPDATE users SET isVerified = 1, verificationToken = NULL WHERE verificationToken = ?', 
+        [token], function(err) {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ success: true, message: 'Email verified successfully!' });
+        });
+});
+
+// Logout
+app.post('/api/auth/logout', verifyToken, (req, res) => {
+    const token = req.headers['authorization']?.split(' ')[1];
+    db.run('DELETE FROM sessions WHERE token = ?', [token]);
+    res.json({ success: true });
+});
+
+// ============ PROTECTED ENDPOINTS ============
+
+// Get all students (protected)
+app.get('/api/students', verifyToken, (req, res) => {
+    db.all('SELECT * FROM students ORDER BY createdAt DESC', (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows);
+    });
+});
+
+// POST new student (admin only)
+app.post('/api/students', verifyToken, isAdmin, (req, res) => {
+    const { fullName, age, gender, course, phone, email, photo } = req.body;
+    
+    db.run(
+        'INSERT INTO students (fullName, age, gender, course, phone, email, photo) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [fullName, age, gender, course, phone, email, photo],
+        function(err) {
+            if (err) return res.status(500).json({ error: err.message });
+            res.status(201).json({ id: this.lastID });
         }
     );
 });
-// Get all users (for admin)
-app.get('/api/users', async (req, res) => {
-    try {
-        const result = await pool.query(
-            'SELECT id, username, email, fullName, phone, role, isApproved, "createdAt" FROM users ORDER BY "createdAt" DESC'
-        );
-        res.json(result.rows);
-    } catch (err) {
-        console.error('Error fetching users:', err);
-        res.status(500).json({ error: err.message });
-    }
+
+// PUT update student (admin only)
+app.put('/api/students/:id', verifyToken, isAdmin, (req, res) => {
+    const { fullName, age, gender, course, phone, email, photo } = req.body;
+    db.run(
+        'UPDATE students SET fullName=?, age=?, gender=?, course=?, phone=?, email=?, photo=? WHERE id=?',
+        [fullName, age, gender, course, phone, email, photo, req.params.id],
+        function(err) {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ message: 'Student updated' });
+        }
+    );
+});
+
+// DELETE student (admin only)
+app.delete('/api/students/:id', verifyToken, isAdmin, (req, res) => {
+    db.run('DELETE FROM students WHERE id=?', [req.params.id], function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ message: 'Student deleted' });
+    });
+});
+
+// Upload photo (protected)
+app.post('/api/upload-photo', verifyToken, upload.single('photo'), (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    res.json({ success: true, imageUrl: req.file.path });
+});
+
+// Get all users (admin only)
+app.get('/api/users', verifyToken, isAdmin, (req, res) => {
+    db.all('SELECT id, username, email, fullName, phone, role, isApproved, isVerified, createdAt FROM users ORDER BY createdAt DESC', 
+        (err, rows) => {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json(rows);
+        });
 });
 
 // Approve user (admin only)
-app.put('/api/users/:id/approve', async (req, res) => {
-    const { id } = req.params;
-    try {
-        await pool.query('UPDATE users SET isApproved = TRUE WHERE id = $1', [id]);
-        res.json({ success: true, message: 'User approved successfully' });
-    } catch (err) {
-        console.error('Error approving user:', err);
-        res.status(500).json({ error: err.message });
-    }
+app.put('/api/users/:id/approve', verifyToken, isAdmin, (req, res) => {
+    db.run('UPDATE users SET isApproved = 1 WHERE id = ?', [req.params.id], function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true });
+    });
 });
 
 // Delete user (admin only)
-app.delete('/api/users/:id', async (req, res) => {
-    try {
-        await pool.query('DELETE FROM users WHERE id = $1', [req.params.id]);
+app.delete('/api/users/:id', verifyToken, isAdmin, (req, res) => {
+    db.run('DELETE FROM users WHERE id = ?', [req.params.id], function(err) {
+        if (err) return res.status(500).json({ error: err.message });
         res.json({ success: true });
-    } catch (err) {
-        console.error('Error deleting user:', err);
-        res.status(500).json({ error: err.message });
-    }
+    });
 });
-// ============ ANNOUNCEMENTS ENDPOINTS ============
 
-// Get all announcements (active first)
-app.get('/api/announcements', (req, res) => {
-    db.query(
-        'SELECT * FROM announcements ORDER BY isActive DESC, createdAt DESC',
-        (err, results) => {
-            if (err) {
-                console.error('Error fetching announcements:', err);
-                return res.status(500).json({ error: err.message });
-            }
-            res.json(results);
+// Get classes (protected)
+app.get('/api/classes', verifyToken, (req, res) => {
+    db.all('SELECT * FROM classes ORDER BY className', (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows);
+    });
+});
+
+// Add class (admin only)
+app.post('/api/classes', verifyToken, isAdmin, (req, res) => {
+    const { className, description } = req.body;
+    db.run('INSERT INTO classes (className, description) VALUES (?, ?)', [className, description], function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true });
+    });
+});
+
+// Get timetable (protected)
+app.get('/api/timetable/:classId', verifyToken, (req, res) => {
+    db.all('SELECT * FROM timetables WHERE classId = ? ORDER BY dayOfWeek, startTime', [req.params.classId], 
+        (err, rows) => {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json(rows);
+        });
+});
+
+// Add timetable (admin only)
+app.post('/api/timetable', verifyToken, isAdmin, (req, res) => {
+    const { classId, dayOfWeek, startTime, endTime, subject, teacher, room } = req.body;
+    db.run(
+        'INSERT INTO timetables (classId, dayOfWeek, startTime, endTime, subject, teacher, room) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [classId, dayOfWeek, startTime, endTime, subject, teacher, room],
+        function(err) {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ success: true });
         }
     );
 });
 
-// Get single announcement
-app.get('/api/announcements/:id', (req, res) => {
-    db.query('SELECT * FROM announcements WHERE id = ?', [req.params.id], (err, result) => {
-        if (err) {
-            console.error('Error fetching announcement:', err);
-            return res.status(500).json({ error: err.message });
-        }
-        if (result.length === 0) {
-            return res.status(404).json({ message: 'Announcement not found' });
-        }
-        res.json(result[0]);
+// Delete timetable (admin only)
+app.delete('/api/timetable/:id', verifyToken, isAdmin, (req, res) => {
+    db.run('DELETE FROM timetables WHERE id = ?', [req.params.id], function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true });
     });
 });
 
-// Create announcement (admin only)
-app.post('/api/announcements', (req, res) => {
-    const { title, content, author, priority } = req.body;
+// ============ PARENT ENDPOINTS ============
+// Generate parent code (admin only)
+app.post('/api/parents/generate', verifyToken, isAdmin, (req, res) => {
+    const { studentId, parentName, phone, email } = req.body;
+    const parentCode = Math.floor(100000 + Math.random() * 900000).toString();
     
-    if (!title || !content) {
-        return res.status(400).json({ error: 'Title and content are required' });
-    }
+    db.run(
+        'INSERT INTO parents (parentCode, parentName, phone, email, studentId) VALUES (?, ?, ?, ?, ?)',
+        [parentCode, parentName, phone, email, studentId],
+        function(err) {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ success: true, parentCode });
+        }
+    );
+});
+
+// Parent login (no token required)
+app.post('/api/parents/login', (req, res) => {
+    const { parentCode } = req.body;
     
-    db.query(
-        'INSERT INTO announcements (title, content, author, priority) VALUES (?, ?, ?, ?)',
-        [title, content, author || 'Admin', priority || 'medium'],
+    db.get(
+        `SELECT p.*, s.fullName as studentName, s.course, s.photo 
+         FROM parents p
+         JOIN students s ON p.studentId = s.id
+         WHERE p.parentCode = ?`,
+        [parentCode],
         (err, result) => {
-            if (err) {
-                console.error('Error creating announcement:', err);
-                return res.status(500).json({ error: err.message });
-            }
-            res.status(201).json({ 
-                success: true, 
-                message: 'Announcement created successfully',
-                id: result.insertId 
+            if (err) return res.status(500).json({ error: err.message });
+            if (!result) return res.status(401).json({ error: 'Invalid parent code' });
+            res.json({ success: true, parent: result });
+        }
+    );
+});
+
+// ============ RESULTS ENDPOINTS ============
+// Save results (admin only)
+app.post('/api/results', verifyToken, isAdmin, (req, res) => {
+    const { studentId, subject1, grade1, subject2, grade2, subject3, grade3, subject4, grade4, remarks, term, year } = req.body;
+    
+    db.run(
+        `INSERT INTO results (studentId, subject1, grade1, subject2, grade2, subject3, grade3, subject4, grade4, remarks, term, year) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [studentId, subject1, grade1, subject2, grade2, subject3, grade3, subject4, grade4, remarks, term || 'Term 1', year || new Date().getFullYear()],
+        function(err) {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ success: true });
+        }
+    );
+});
+
+// Get results for parent
+app.get('/api/parents/:parentCode/results', (req, res) => {
+    const { parentCode } = req.params;
+    
+    db.get('SELECT studentId FROM parents WHERE parentCode = ?', [parentCode], (err, parent) => {
+        if (err) return res.status(500).json({ error: err.message });
+        if (!parent) return res.status(404).json({ error: 'Parent not found' });
+        
+        db.all('SELECT * FROM results WHERE studentId = ? ORDER BY year DESC, term DESC', [parent.studentId], 
+            (err, results) => {
+                if (err) return res.status(500).json({ error: err.message });
+                res.json({ success: true, results });
             });
-        }
-    );
-});
-
-// Update announcement (admin only)
-app.put('/api/announcements/:id', (req, res) => {
-    const { title, content, isActive } = req.body;
-    
-    db.query(
-        'UPDATE announcements SET title = ?, content = ?, isActive = ? WHERE id = ?',
-        [title, content, isActive, req.params.id],
-        (err, result) => {
-            if (err) {
-                console.error('Error updating announcement:', err);
-                return res.status(500).json({ error: err.message });
-            }
-            if (result.affectedRows === 0) {
-                return res.status(404).json({ message: 'Announcement not found' });
-            }
-            res.json({ success: true, message: 'Announcement updated successfully' });
-        }
-    );
-});
-
-// Delete announcement (admin only)
-app.delete('/api/announcements/:id', (req, res) => {
-    db.query('DELETE FROM announcements WHERE id = ?', [req.params.id], (err, result) => {
-        if (err) {
-            console.error('Error deleting announcement:', err);
-            return res.status(500).json({ error: err.message });
-        }
-        if (result.affectedRows === 0) {
-            return res.status(404).json({ message: 'Announcement not found' });
-        }
-        res.json({ success: true, message: 'Announcement deleted successfully' });
     });
+});
+
+// ============ SEND EMAIL ============
+app.post('/api/send-results', verifyToken, async (req, res) => {
+    const { student, results } = req.body;
+    
+    if (!resend) return res.status(500).json({ error: 'Email service not configured' });
+    
+    const emailContent = `<h2>Katwe Secondary School - Matokeo ya Mitihani</h2>
+        <p><strong>Jina:</strong> ${student.fullName}</p>
+        <p><strong>Kozi:</strong> ${student.course}</p>
+        <hr/>
+        <h3>Matokeo:</h3>
+        <ul>
+            <li>${results.subject1 || 'N/A'}: ${results.grade1 || 'N/A'}</li>
+            <li>${results.subject2 || 'N/A'}: ${results.grade2 || 'N/A'}</li>
+            <li>${results.subject3 || 'N/A'}: ${results.grade3 || 'N/A'}</li>
+            <li>${results.subject4 || 'N/A'}: ${results.grade4 || 'N/A'}</li>
+        </ul>
+        <p><strong>Maoni:</strong> ${results.remarks || 'Hakuna maoni'}</p>`;
+    
+    try {
+        await resend.emails.send({
+            from: 'onboarding@resend.dev',
+            to: [student.email],
+            subject: `Matokeo yako - ${student.fullName}`,
+            html: emailContent
+        });
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
 });
 
 // ============ START SERVER ============
 app.listen(PORT, () => {
-    console.log(`🚀 Server running on http://localhost:${PORT}`);
-    console.log(`✅ Health check: http://localhost:${PORT}/api/health`);
-    console.log(`📧 Email endpoint: http://localhost:${PORT}/api/send-results`);
-    console.log(`📱 SMS endpoint: http://localhost:${PORT}/api/send-sms`);
-    console.log(`👨‍👩‍👧 Parent endpoints: /api/parents/*`);
-    console.log(`📊 Results endpoints: /api/results, /api/parents/:code/results`);
-    console.log(`📅 Timetable endpoints: /api/classes, /api/timetable/*`);
+    console.log(`🔒 Secure server running on http://localhost:${PORT}`);
+    console.log(`✅ JWT authentication enabled`);
+    console.log(`✅ Rate limiting enabled`);
+    console.log(`✅ Input validation enabled`);
 });
