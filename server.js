@@ -753,49 +753,50 @@ app.post('/api/auth/register', async (req, res) => {
     }
 });
 
+
 // User login (with approval check)
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', (req, res) => {
     const { username, password } = req.body;
     
     if (!username || !password) {
         return res.status(400).json({ error: 'Username and password are required' });
     }
     
-    try {
-        const hashedPassword = Buffer.from(password).toString('base64');
-        
-        const result = await pool.query(
-            'SELECT * FROM users WHERE username = $1 AND password = $2',
-            [username, hashedPassword]
-        );
-        
-        if (result.rows.length === 0) {
-            return res.status(401).json({ error: 'Invalid username or password' });
-        }
-        
-        const user = result.rows[0];
-        
-        if (!user.isapproved) {
-            return res.status(401).json({ error: 'Your account is pending approval. Please wait for admin to approve.' });
-        }
-        
-        res.json({ 
-            success: true, 
-            user: {
-                id: user.id,
-                username: user.username,
-                email: user.email,
-                fullName: user.fullname,
-                role: user.role,
-                isApproved: user.isapproved
+    const hashedPassword = Buffer.from(password).toString('base64');
+    
+    db.query(
+        'SELECT * FROM users WHERE username = ? AND password = ?',
+        [username, hashedPassword],
+        (err, result) => {
+            if (err) {
+                console.error('Login error:', err);
+                return res.status(500).json({ error: err.message });
             }
-        });
-    } catch (err) {
-        console.error('Login error:', err);
-        res.status(500).json({ error: err.message });
-    }
+            
+            if (result.length === 0) {
+                return res.status(401).json({ error: 'Invalid username or password' });
+            }
+            
+            const user = result[0];
+            
+            if (!user.isApproved) {
+                return res.status(401).json({ error: 'Your account is pending approval. Please wait for admin to approve.' });
+            }
+            
+            res.json({ 
+                success: true, 
+                user: {
+                    id: user.id,
+                    username: user.username,
+                    email: user.email,
+                    fullName: user.fullName,
+                    role: user.role,
+                    isApproved: user.isApproved
+                }
+            });
+        }
+    );
 });
-
 // Get all users (for admin)
 app.get('/api/users', async (req, res) => {
     try {
