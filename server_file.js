@@ -34,7 +34,27 @@ if (fs.existsSync(DATA_FILE)) {
         console.log('✅ Data loaded from file');
     } catch(e) { console.log('No saved data'); }
 }
+// ============ AVERAGE & DIVISION FUNCTIONS ============
+const getGradePoints = (grade) => {
+    const points = { 'A': 4.0, 'B+': 3.5, 'B': 3.0, 'C+': 2.5, 'C': 2.0, 'D': 1.0, 'F': 0.0 };
+    return points[grade] || 0;
+};
 
+const calculateAverage = (grades) => {
+    let total = 0, count = 0;
+    const gradeList = [grades.grade1, grades.grade2, grades.grade3, grades.grade4];
+    gradeList.forEach(g => {
+        if (g && g !== '') { total += getGradePoints(g); count++; }
+    });
+    return count > 0 ? (total / count) : 0;
+};
+
+const calculateDivision = (avg) => {
+    if (avg >= 3.5) return 'I';
+    if (avg >= 2.5) return 'II';
+    if (avg >= 1.5) return 'III';
+    return 'IV';
+};
 // Save data function
 const saveData = () => {
     fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
@@ -135,11 +155,24 @@ app.delete('/api/users/:id', (req, res) => {
 // Students
 app.get('/api/students', (req, res) => res.json(data.students));
 
-app.post('/api/students', (req, res) => {
-    const newStudent = { id: Date.now(), ...req.body, createdAt: new Date().toISOString() };
-    data.students.push(newStudent);
+app.post('/api/results', (req, res) => {
+    const { studentId, subject1, grade1, subject2, grade2, subject3, grade3, subject4, grade4, remarks, term, year } = req.body;
+    
+    const grades = { grade1, grade2, grade3, grade4 };
+    const average = calculateAverage(grades);
+    const division = calculateDivision(average);
+    
+    const newResult = {
+        id: Date.now(), studentId,
+        subject1, grade1, subject2, grade2, subject3, grade3, subject4, grade4,
+        remarks, term: term || 'Term 1', year: year || new Date().getFullYear(),
+        average: parseFloat(average.toFixed(2)), division,
+        createdAt: new Date().toISOString()
+    };
+    
+    data.results.push(newResult);
     saveData();
-    res.status(201).json(newStudent);
+    res.json({ success: true, average, division });
 });
 
 app.put('/api/students/:id', (req, res) => {
