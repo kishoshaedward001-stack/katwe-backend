@@ -251,3 +251,286 @@ app.listen(PORT, () => {
     console.log(`✅ Admin: admin / admin123`);
     console.log(`✅ Teacher: teacher / teacher123`);
 });
+
+// ============ PDF REPORTS ENDPOINTS ============
+
+// Generate PDF for a single student
+app.get('/api/report/student/:id', async (req, res) => {
+    const PDFDocument = require('pdfkit');
+    const studentId = req.params.id;
+    
+    try {
+        const student = data.students.find(s => s.id == studentId);
+        if (!student) {
+            return res.status(404).json({ error: 'Student not found' });
+        }
+        
+        // Get student results
+        const studentResults = data.results.filter(r => r.studentId == studentId);
+        const latestResult = studentResults[0] || null;
+        
+        // Create PDF
+        const doc = new PDFDocument({ margin: 50 });
+        
+        // Set response headers
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename=report_${student.fullName}.pdf`);
+        
+        doc.pipe(res);
+        
+        // Header
+        doc.fontSize(20)
+           .font('Helvetica-Bold')
+           .fillColor('#1e3c72')
+           .text('KATWE SECONDARY SCHOOL', { align: 'center' });
+        
+        doc.fontSize(14)
+           .fillColor('#666')
+           .text('Student Academic Report', { align: 'center' });
+        
+        doc.moveDown();
+        
+        // Student Info
+        doc.fontSize(12)
+           .font('Helvetica-Bold')
+           .fillColor('#333')
+           .text('STUDENT INFORMATION', { underline: true });
+        
+        doc.fontSize(10)
+           .font('Helvetica')
+           .fillColor('#555')
+           .text(`Name: ${student.fullName}`)
+           .text(`Age: ${student.age} years`)
+           .text(`Gender: ${student.gender === 'MALE' ? 'Male' : 'Female'}`)
+           .text(`Course: ${student.course}`)
+           .text(`Phone: ${student.phone || 'N/A'}`)
+           .text(`Email: ${student.email || 'N/A'}`);
+        
+        doc.moveDown();
+        
+        // Results
+        doc.fontSize(12)
+           .font('Helvetica-Bold')
+           .fillColor('#333')
+           .text('ACADEMIC RESULTS', { underline: true });
+        
+        if (latestResult) {
+            const grades = [
+                { subject: latestResult.subject1 || 'N/A', grade: latestResult.grade1 || 'N/A' },
+                { subject: latestResult.subject2 || 'N/A', grade: latestResult.grade2 || 'N/A' },
+                { subject: latestResult.subject3 || 'N/A', grade: latestResult.grade3 || 'N/A' },
+                { subject: latestResult.subject4 || 'N/A', grade: latestResult.grade4 || 'N/A' }
+            ];
+            
+            // Create table
+            let y = doc.y;
+            doc.fontSize(10)
+               .font('Helvetica-Bold')
+               .fillColor('#1e3c72')
+               .text('Subject', 50, y)
+               .text('Grade', 250, y);
+            
+            y += 20;
+            doc.font('Helvetica');
+            
+            grades.forEach(g => {
+                if (g.subject !== 'N/A') {
+                    doc.fillColor('#555')
+                       .text(g.subject, 50, y)
+                       .text(g.grade, 250, y);
+                    y += 20;
+                }
+            });
+            
+            doc.moveDown(2);
+            doc.fontSize(10)
+               .text(`Remarks: ${latestResult.remarks || 'No remarks'}`, { align: 'center' });
+        } else {
+            doc.fontSize(10)
+               .fillColor('#999')
+               .text('No results available for this student.', { align: 'center' });
+        }
+        
+        // Footer
+        const pageCount = doc.bufferedPageRange().count;
+        for (let i = 0; i < pageCount; i++) {
+            doc.switchToPage(i);
+            doc.fontSize(8)
+               .fillColor('#999')
+               .text(
+                   `Generated on ${new Date().toLocaleDateString()} - Katwe Secondary School`,
+                   50,
+                   doc.page.height - 50,
+                   { align: 'center' }
+               );
+        }
+        
+        doc.end();
+        
+    } catch (error) {
+        console.error('PDF generation error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Generate PDF for all students
+app.get('/api/report/all-students', async (req, res) => {
+    const PDFDocument = require('pdfkit');
+    
+    try {
+        const doc = new PDFDocument({ margin: 50, layout: 'landscape' });
+        
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', 'attachment; filename=all_students_report.pdf');
+        
+        doc.pipe(res);
+        
+        // Header
+        doc.fontSize(20)
+           .font('Helvetica-Bold')
+           .fillColor('#1e3c72')
+           .text('KATWE SECONDARY SCHOOL', { align: 'center' });
+        
+        doc.fontSize(14)
+           .fillColor('#666')
+           .text('All Students Report', { align: 'center' });
+        
+        doc.moveDown();
+        
+        // Table headers
+        let y = doc.y;
+        doc.fontSize(9)
+           .font('Helvetica-Bold')
+           .fillColor('white')
+           .rect(50, y, 500, 20)
+           .fill('#1e3c72');
+        
+        doc.fillColor('white')
+           .text('Name', 55, y + 5)
+           .text('Age', 155, y + 5)
+           .text('Gender', 205, y + 5)
+           .text('Course', 275, y + 5)
+           .text('Phone', 375, y + 5)
+           .text('Email', 455, y + 5);
+        
+        y += 25;
+        
+        // Table rows
+        data.students.forEach((student, index) => {
+            if (y > doc.page.height - 80) {
+                doc.addPage();
+                y = 50;
+            }
+            
+            const bgColor = index % 2 === 0 ? '#f5f5f5' : 'white';
+            doc.rect(50, y - 3, 500, 22).fill(bgColor);
+            
+            doc.fillColor('#333')
+               .fontSize(8)
+               .text(student.fullName.substring(0, 30), 55, y)
+               .text(student.age.toString(), 155, y)
+               .text(student.gender === 'MALE' ? 'M' : 'F', 205, y)
+               .text(student.course.substring(0, 25), 275, y)
+               .text(student.phone || '-', 375, y)
+               .text((student.email || '-').substring(0, 25), 455, y);
+            
+            y += 25;
+        });
+        
+        doc.end();
+        
+    } catch (error) {
+        console.error('PDF generation error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Generate class report
+app.get('/api/report/class/:className', async (req, res) => {
+    const PDFDocument = require('pdfkit');
+    const { className } = req.params;
+    
+    try {
+        const classStudents = data.students.filter(s => s.course === className);
+        
+        const doc = new PDFDocument({ margin: 50 });
+        
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename=${className}_report.pdf`);
+        
+        doc.pipe(res);
+        
+        // Header
+        doc.fontSize(20)
+           .font('Helvetica-Bold')
+           .fillColor('#1e3c72')
+           .text('KATWE SECONDARY SCHOOL', { align: 'center' });
+        
+        doc.fontSize(14)
+           .fillColor('#666')
+           .text(`${className} - Class Report`, { align: 'center' });
+        
+        doc.moveDown();
+        
+        // Statistics
+        const maleCount = classStudents.filter(s => s.gender === 'MALE').length;
+        const femaleCount = classStudents.filter(s => s.gender === 'FEMALE').length;
+        
+        doc.fontSize(10)
+           .fillColor('#333')
+           .text(`Total Students: ${classStudents.length}`)
+           .text(`Male: ${maleCount}`)
+           .text(`Female: ${femaleCount}`);
+        
+        doc.moveDown();
+        
+        // Student list
+        doc.fontSize(12)
+           .font('Helvetica-Bold')
+           .text('STUDENT LIST', { underline: true });
+        
+        doc.moveDown(0.5);
+        
+        let y = doc.y;
+        doc.fontSize(9)
+           .font('Helvetica-Bold')
+           .fillColor('white')
+           .rect(50, y, 450, 20)
+           .fill('#1e3c72');
+        
+        doc.fillColor('white')
+           .text('#', 55, y + 5)
+           .text('Name', 75, y + 5)
+           .text('Age', 225, y + 5)
+           .text('Gender', 275, y + 5)
+           .text('Phone', 325, y + 5);
+        
+        y += 25;
+        
+        classStudents.forEach((student, index) => {
+            if (y > doc.page.height - 80) {
+                doc.addPage();
+                y = 50;
+            }
+            
+            const bgColor = index % 2 === 0 ? '#f5f5f5' : 'white';
+            doc.rect(50, y - 3, 450, 22).fill(bgColor);
+            
+            doc.fillColor('#333')
+               .fontSize(8)
+               .text((index + 1).toString(), 55, y)
+               .text(student.fullName.substring(0, 30), 75, y)
+               .text(student.age.toString(), 225, y)
+               .text(student.gender === 'MALE' ? 'M' : 'F', 275, y)
+               .text(student.phone || '-', 325, y);
+            
+            y += 25;
+        });
+        
+        doc.end();
+        
+    } catch (error) {
+        console.error('PDF generation error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
