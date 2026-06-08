@@ -6,7 +6,7 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
-// ============ MOCK DATABASE ============
+// ============ DATABASE (In-memory kwa sasa) ============
 let students = [];
 let users = [
     { id: 1, username: "admin", password: "YWRtaW4xMjM=", role: "admin", isApproved: true, fullName: "Admin Mkuu" },
@@ -16,14 +16,87 @@ let classes = [];
 let timetables = [];
 let parents = [];
 let results = [];
+let announcements = []; // Matangazo
+
+// ============ SAMPLE ANNOUNCEMENTS ============
+announcements.push({
+    id: 1,
+    title: "Karibu Shule",
+    content: "Karibu wanafunzi wote mwaka wa masomo 2026. Mwaka huu tunaanza rasmi tarehe 15 Januari.",
+    author: "Admin Mkuu",
+    priority: "high",
+    imageUrl: "",
+    createdAt: new Date().toISOString()
+});
 
 // ============ UPLOAD PHOTO (Mock) ============
 app.post('/api/upload-photo', (req, res) => {
-    // Mock upload - returns a placeholder image
     res.json({ 
         success: true, 
         imageUrl: 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png'
     });
+});
+
+// ============ UPLOAD ANNOUNCEMENT IMAGE ============
+app.post('/api/upload-announcement-image', (req, res) => {
+    // Mock upload - returns a placeholder image
+    res.json({ 
+        success: true, 
+        imageUrl: 'https://images.unsplash.com/photo-1580582932707-520aed937b7b?w=500'
+    });
+});
+
+// ============ ANNOUNCEMENTS ENDPOINTS ============
+
+// Get all announcements
+app.get('/api/announcements', (req, res) => {
+    // Sort by newest first
+    const sorted = [...announcements].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    res.json(sorted);
+});
+
+// Get single announcement
+app.get('/api/announcements/:id', (req, res) => {
+    const announcement = announcements.find(a => a.id == req.params.id);
+    if (!announcement) return res.status(404).json({ error: 'Not found' });
+    res.json(announcement);
+});
+
+// Create announcement (admin only)
+app.post('/api/announcements', (req, res) => {
+    const { title, content, author, priority, imageUrl } = req.body;
+    
+    if (!title || !content) {
+        return res.status(400).json({ error: 'Title and content are required' });
+    }
+    
+    const newAnnouncement = {
+        id: Date.now(),
+        title,
+        content,
+        author: author || 'Admin',
+        priority: priority || 'medium',
+        imageUrl: imageUrl || '',
+        createdAt: new Date().toISOString()
+    };
+    
+    announcements.push(newAnnouncement);
+    res.status(201).json({ success: true, announcement: newAnnouncement });
+});
+
+// Update announcement (admin only)
+app.put('/api/announcements/:id', (req, res) => {
+    const index = announcements.findIndex(a => a.id == req.params.id);
+    if (index === -1) return res.status(404).json({ error: 'Not found' });
+    
+    announcements[index] = { ...announcements[index], ...req.body };
+    res.json({ success: true, announcement: announcements[index] });
+});
+
+// Delete announcement (admin only)
+app.delete('/api/announcements/:id', (req, res) => {
+    announcements = announcements.filter(a => a.id != req.params.id);
+    res.json({ success: true });
 });
 
 // ============ AUTH ENDPOINTS ============
@@ -225,5 +298,5 @@ app.listen(PORT, () => {
     console.log(`✅ Server running on port ${PORT}`);
     console.log(`✅ Admin: admin / admin123`);
     console.log(`✅ Teacher: teacher / teacher123`);
-    console.log(`✅ All endpoints ready`);
+    console.log(`✅ Announcements endpoints ready`);
 });
