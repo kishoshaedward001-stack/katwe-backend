@@ -2,10 +2,11 @@
   "name": "katwe-backend",
   "version": "1.0.0",
   "scripts": {
-    "start": "node server_final.js"
+    "start": "node server_file.js"
   },
   "dependencies": {
     "express": "^4.18.2",
-    "cors": "^2.8.5"
+    "cors": "^2.8.5",
+    "compression": "^1.7.4"
   }
 }
