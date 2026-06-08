@@ -1,0 +1,29 @@
+{
+  "users": [
+    {
+      "id": 1,
+      "username": "admin",
+      "email": "admin@katwe.edu",
+      "password": "YWRtaW4xMjM=",
+      "fullName": "Admin Mkuu",
+      "role": "admin",
+      "isApproved": true,
+      "createdAt": "2026-06-08T11:25:19.361Z"
+    },
+    {
+      "id": 2,
+      "username": "teacher",
+      "email": "teacher@katwe.edu",
+      "password": "dGVhY2hlcjEyMw==",
+      "fullName": "Mwalimu Juma",
+      "role": "user",
+      "isApproved": true,
+      "createdAt": "2026-06-08T11:25:19.368Z"
+    }
+  ],
+  "students": [],
+  "classes": [],
+  "timetables": [],
+  "parents": [],
+  "results": []
+}
