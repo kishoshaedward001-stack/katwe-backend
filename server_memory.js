@@ -24,28 +24,56 @@ let data = {
 };
 
 // ============ HELPER FUNCTIONS FOR GRADES ============
-const getGradePoints = (grade) => {
-    const points = { 'A': 4.0, 'B+': 3.5, 'B': 3.0, 'C+': 2.5, 'C': 2.0, 'D': 1.0, 'F': 0.0 };
-    return points[grade] || 0;
+
+// Convert score to letter grade
+const getLetterGrade = (score) => {
+    if (score >= 75) return 'A';
+    if (score >= 65) return 'B';
+    if (score >= 45) return 'C';
+    if (score >= 30) return 'D';
+    return 'F';
 };
 
-const calculateAverage = (grades) => {
-    let total = 0, count = 0;
-    const gradeList = [grades.grade1, grades.grade2, grades.grade3, grades.grade4];
-    gradeList.forEach(g => {
-        if (g && g !== '') {
-            total += getGradePoints(g);
+// Convert letter grade to points for division
+const getGradePoints = (grade) => {
+    const points = { 'A': 1, 'B': 2, 'C': 3, 'D': 4, 'F': 5 };
+    return points[grade] || 5;
+};
+
+// Calculate average from scores
+const calculateAverage = (scores) => {
+    let total = 0;
+    let count = 0;
+    const scoreList = [scores.score1, scores.score2, scores.score3, scores.score4, scores.score5, scores.score6, scores.score7];
+    scoreList.forEach(score => {
+        if (score && score !== '' && !isNaN(score)) {
+            total += parseFloat(score);
             count++;
         }
     });
     return count > 0 ? (total / count) : 0;
 };
 
-const calculateDivision = (avg) => {
-    if (avg >= 3.5) return 'I';
-    if (avg >= 2.5) return 'II';
-    if (avg >= 1.5) return 'III';
-    return 'IV';
+// Calculate division based on points (A=1, B=2, C=3, D=4, F=5)
+// Division = (sum of points) / (number of subjects)
+const calculateDivision = (grades) => {
+    let totalPoints = 0;
+    let count = 0;
+    const gradeList = [grades.grade1, grades.grade2, grades.grade3, grades.grade4, grades.grade5, grades.grade6, grades.grade7];
+    gradeList.forEach(grade => {
+        if (grade && grade !== '') {
+            totalPoints += getGradePoints(grade);
+            count++;
+        }
+    });
+    
+    const avgPoints = count > 0 ? totalPoints / count : 5;
+    
+    if (avgPoints <= 1.5) return 'I';
+    if (avgPoints <= 2.5) return 'II';
+    if (avgPoints <= 3.5) return 'III';
+    if (avgPoints <= 4.5) return 'IV';
+    return '0';
 };
 
 // ============ HEALTH CHECK ============
@@ -171,29 +199,59 @@ app.get('/api/parents/:parentCode/results', (req, res) => {
     res.json({ success: true, results: data.results.filter(r => r.studentId == parent.studentId) });
 });
 
+
 // ============ RESULTS ============
 app.post('/api/results', (req, res) => {
-    const { studentId, subject1, grade1, subject2, grade2, subject3, grade3, subject4, grade4, remarks, term, year } = req.body;
+    const { 
+        studentId, 
+        subject1, score1, grade1,
+        subject2, score2, grade2,
+        subject3, score3, grade3,
+        subject4, score4, grade4,
+        subject5, score5, grade5,
+        subject6, score6, grade6,
+        subject7, score7, grade7,
+        remarks, term, year 
+    } = req.body;
     
-    const grades = { grade1, grade2, grade3, grade4 };
-    const average = calculateAverage(grades);
-    const division = calculateDivision(average);
+    // Calculate letter grades from scores
+    const finalGrade1 = grade1 || (score1 ? getLetterGrade(parseFloat(score1)) : '');
+    const finalGrade2 = grade2 || (score2 ? getLetterGrade(parseFloat(score2)) : '');
+    const finalGrade3 = grade3 || (score3 ? getLetterGrade(parseFloat(score3)) : '');
+    const finalGrade4 = grade4 || (score4 ? getLetterGrade(parseFloat(score4)) : '');
+    const finalGrade5 = grade5 || (score5 ? getLetterGrade(parseFloat(score5)) : '');
+    const finalGrade6 = grade6 || (score6 ? getLetterGrade(parseFloat(score6)) : '');
+    const finalGrade7 = grade7 || (score7 ? getLetterGrade(parseFloat(score7)) : '');
+    
+    // Calculate average from scores
+    const scores = { score1, score2, score3, score4, score5, score6, score7 };
+    const average = calculateAverage(scores);
+    
+    // Calculate division
+    const grades = { grade1: finalGrade1, grade2: finalGrade2, grade3: finalGrade3, grade4: finalGrade4, grade5: finalGrade5, grade6: finalGrade6, grade7: finalGrade7 };
+    const division = calculateDivision(grades);
     
     const newResult = {
-        id: Date.now(), studentId,
-        subject1, grade1, subject2, grade2, subject3, grade3, subject4, grade4,
-        remarks, term: term || 'Term 1', year: year || new Date().getFullYear(),
-        average: parseFloat(average.toFixed(2)), division,
+        id: Date.now(),
+        studentId,
+        subject1, score1, grade1: finalGrade1,
+        subject2, score2, grade2: finalGrade2,
+        subject3, score3, grade3: finalGrade3,
+        subject4, score4, grade4: finalGrade4,
+        subject5, score5, grade5: finalGrade5,
+        subject6, score6, grade6: finalGrade6,
+        subject7, score7, grade7: finalGrade7,
+        remarks,
+        term: term || 'Term 1',
+        year: year || new Date().getFullYear(),
+        average: parseFloat(average.toFixed(2)),
+        division,
         createdAt: new Date().toISOString()
     };
+    
     data.results.push(newResult);
-    res.json({ success: true, average, division });
+    res.json({ success: true, average: average.toFixed(2), division });
 });
-
-app.get('/api/students/:studentId/results', (req, res) => {
-    res.json(data.results.filter(r => r.studentId == req.params.studentId));
-});
-
 // ============ ANNOUNCEMENTS ============
 app.get('/api/announcements', (req, res) => {
     res.json(data.announcements.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
