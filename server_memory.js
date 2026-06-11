@@ -436,19 +436,30 @@ app.get('/api/report/class/:className', (req, res) => {
     
     doc.end();
 });
+
 // ============ PROGRESS CHART ENDPOINT ============
 app.get('/api/students/:id/progress', (req, res) => {
     const studentId = parseInt(req.params.id);
     
+    console.log(`📊 Progress request for student ID: ${studentId}`);
+    
+    // Check if student exists
+    const student = data.students.find(s => s.id === studentId);
+    if (!student) {
+        console.log(`❌ Student ${studentId} not found`);
+        return res.status(404).json({ error: 'Student not found' });
+    }
+    
     // Get all results for this student
     const studentResults = data.results
-        .filter(r => r.studentId == studentId)
+        .filter(r => r.studentId === studentId)
         .sort((a, b) => {
-            // Sort by year first, then by term
             if (a.year !== b.year) return a.year - b.year;
             const termOrder = { 'Term 1': 1, 'Term 2': 2, 'Term 3': 3 };
             return termOrder[a.term] - termOrder[b.term];
         });
+    
+    console.log(`📊 Found ${studentResults.length} results for student ${studentId}`);
     
     if (studentResults.length === 0) {
         return res.json({ success: true, hasData: false, message: 'No results available yet' });
@@ -457,12 +468,8 @@ app.get('/api/students/:id/progress', (req, res) => {
     // Prepare chart data
     const labels = studentResults.map(r => `${r.term} ${r.year}`);
     const averages = studentResults.map(r => r.average || 0);
-    const divisions = studentResults.map(r => {
-        const divPoints = { 'I': 1, 'II': 2, 'III': 3, 'IV': 4 };
-        return divPoints[r.division] || 0;
-    });
     
-    // Calculate trend (improving or declining)
+    // Calculate trend
     const firstAvg = averages[0];
     const lastAvg = averages[averages.length - 1];
     const trend = lastAvg > firstAvg ? 'improving' : (lastAvg < firstAvg ? 'declining' : 'stable');
@@ -474,18 +481,16 @@ app.get('/api/students/:id/progress', (req, res) => {
         progress: {
             labels,
             averages,
-            divisions,
             trend,
             improvement: improvement > 0 ? `+${improvement}%` : `${improvement}%`,
             totalExams: studentResults.length,
             bestAverage: Math.max(...averages),
             worstAverage: Math.min(...averages),
             currentAverage: averages[averages.length - 1],
-            currentDivision: studentResults[studentResults.length - 1].division
+            currentDivision: studentResults[studentResults.length - 1].division || 'N/A'
         }
     });
 });
-
 // ============ START SERVER ============
 app.listen(PORT, () => {
     console.log(`✅ Server running on http://localhost:${PORT}`);
