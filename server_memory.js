@@ -436,6 +436,55 @@ app.get('/api/report/class/:className', (req, res) => {
     
     doc.end();
 });
+// ============ PROGRESS CHART ENDPOINT ============
+app.get('/api/students/:id/progress', (req, res) => {
+    const studentId = parseInt(req.params.id);
+    
+    // Get all results for this student
+    const studentResults = data.results
+        .filter(r => r.studentId == studentId)
+        .sort((a, b) => {
+            // Sort by year first, then by term
+            if (a.year !== b.year) return a.year - b.year;
+            const termOrder = { 'Term 1': 1, 'Term 2': 2, 'Term 3': 3 };
+            return termOrder[a.term] - termOrder[b.term];
+        });
+    
+    if (studentResults.length === 0) {
+        return res.json({ success: true, hasData: false, message: 'No results available yet' });
+    }
+    
+    // Prepare chart data
+    const labels = studentResults.map(r => `${r.term} ${r.year}`);
+    const averages = studentResults.map(r => r.average || 0);
+    const divisions = studentResults.map(r => {
+        const divPoints = { 'I': 1, 'II': 2, 'III': 3, 'IV': 4 };
+        return divPoints[r.division] || 0;
+    });
+    
+    // Calculate trend (improving or declining)
+    const firstAvg = averages[0];
+    const lastAvg = averages[averages.length - 1];
+    const trend = lastAvg > firstAvg ? 'improving' : (lastAvg < firstAvg ? 'declining' : 'stable');
+    const improvement = ((lastAvg - firstAvg) / firstAvg * 100).toFixed(1);
+    
+    res.json({ 
+        success: true, 
+        hasData: true,
+        progress: {
+            labels,
+            averages,
+            divisions,
+            trend,
+            improvement: improvement > 0 ? `+${improvement}%` : `${improvement}%`,
+            totalExams: studentResults.length,
+            bestAverage: Math.max(...averages),
+            worstAverage: Math.min(...averages),
+            currentAverage: averages[averages.length - 1],
+            currentDivision: studentResults[studentResults.length - 1].division
+        }
+    });
+});
 
 // ============ START SERVER ============
 app.listen(PORT, () => {
