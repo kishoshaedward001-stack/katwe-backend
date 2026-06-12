@@ -19,7 +19,7 @@ db.serialize(() => {
         fullName TEXT NOT NULL,
         age INTEGER NOT NULL,
         gender TEXT NOT NULL,
-        course TEXT NOT NULL,
+        class TEXT NOT NULL,
         phone TEXT,
         email TEXT,
         photo TEXT,
@@ -137,10 +137,10 @@ app.get('/api/students', (req, res) => {
 
 // Create student
 app.post('/api/students', (req, res) => {
-    const { fullName, age, gender, course, phone, email, photo } = req.body;
+    const { fullName, age, gender, class: studentClass, phone, email, photo } = req.body;
     db.run(
-        'INSERT INTO students (fullName, age, gender, course, phone, email, photo) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [fullName, age, gender, course, phone, email, photo],
+        'INSERT INTO students (fullName, age, gender, class, phone, email, photo) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [fullName, age, gender, studentClass, phone, email, photo],
         function(err) {
             if (err) return res.status(500).json({ error: err.message });
             res.status(201).json({ id: this.lastID });
@@ -150,10 +150,10 @@ app.post('/api/students', (req, res) => {
 
 // Update student
 app.put('/api/students/:id', (req, res) => {
-    const { fullName, age, gender, course, phone, email, photo } = req.body;
+    const { fullName, age, gender, class: studentClass, phone, email, photo } = req.body;
     db.run(
-        'UPDATE students SET fullName=?, age=?, gender=?, course=?, phone=?, email=?, photo=? WHERE id=?',
-        [fullName, age, gender, course, phone, email, photo, req.params.id],
+        'UPDATE students SET fullName=?, age=?, gender=?, class=?, phone=?, email=?, photo=? WHERE id=?',
+        [fullName, age, gender, studentClass, phone, email, photo, req.params.id],
         function(err) {
             if (err) return res.status(500).json({ error: err.message });
             res.json({ message: 'Student updated' });
@@ -191,7 +191,7 @@ app.post('/api/parents/login', (req, res) => {
     const { parentCode } = req.body;
     
     db.get(
-        `SELECT p.*, s.fullName as studentName, s.course, s.photo 
+        `SELECT p.*, s.fullName as studentName, s.class, s.photo 
          FROM parents p
          JOIN students s ON p.studentId = s.id
          WHERE p.parentCode = ?`,

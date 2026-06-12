@@ -310,7 +310,7 @@ app.get('/api/report/student/:id', (req, res) => {
        .text(`Name: ${student.fullName}`)
        .text(`Age: ${student.age} years`)
        .text(`Gender: ${student.gender === 'MALE' ? 'Male' : 'Female'}`)
-       .text(`Course: ${student.course}`)
+       .text(`Class: ${student.class || 'N/A'}`)
        .text(`Phone: ${student.phone || 'N/A'}`)
        .text(`Email: ${student.email || 'N/A'}`);
     doc.moveDown();
@@ -392,7 +392,7 @@ app.get('/api/report/all-students', (req, res) => {
 // Generate class report
 app.get('/api/report/class/:className', (req, res) => {
     const { className } = req.params;
-    const classStudents = data.students.filter(s => s.course === className);
+    const classStudents = data.students.filter(s => s.class=== className);
     const doc = new PDFDocument({ margin: 50 });
     
     res.setHeader('Content-Type', 'application/pdf');

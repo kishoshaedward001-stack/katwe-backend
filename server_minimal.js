@@ -92,7 +92,7 @@ app.post('/api/auth/register', (req, res) => {
         fullName: fullName || '',
         phone: phone || '',
         role: 'user',
-        isApproved: false
+        isApproved: true // For testing, auto-approve new users. Change to false in production.
     };
     users.push(newUser);
     res.json({ success: true, message: 'Registration successful! Please wait for admin approval.' });
@@ -255,7 +255,7 @@ app.listen(PORT, () => {
     console.log(`✅ Admin: admin / admin123`);
     console.log(`✅ Teacher: teacher / teacher123`);
 });
-EOFcd ~/student-system/backend
+
 cat > server_minimal.js << 'EOF'
 const express = require('express');
 const cors = require('cors');
