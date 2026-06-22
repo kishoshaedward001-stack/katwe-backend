@@ -1016,13 +1016,13 @@ app.get('/api/report/student/:id', (req, res) => {
                 
                 if (latestResult) {
                     const grades = [
-                        { subject: latestResult.subject1 || 'N/A', grade: latestResult.grade1 || 'N/A' },
-                        { subject: latestResult.subject2 || 'N/A', grade: latestResult.grade2 || 'N/A' },
-                        { subject: latestResult.subject3 || 'N/A', grade: latestResult.grade3 || 'N/A' },
-                        { subject: latestResult.subject4 || 'N/A', grade: latestResult.grade4 || 'N/A' },
-                        { subject: latestResult.subject5 || 'N/A', grade: latestResult.grade5 || 'N/A' },
-                        { subject: latestResult.subject6 || 'N/A', grade: latestResult.grade6 || 'N/A' },
-                        { subject: latestResult.subject7 || 'N/A', grade: latestResult.grade7 || 'N/A' }
+                        { subject: latestResult.subject1 || '', grade: latestResult.grade1 || '' },
+                        { subject: latestResult.subject2 || '', grade: latestResult.grade2 || '' },
+                        { subject: latestResult.subject3 || '', grade: latestResult.grade3 || '' },
+                        { subject: latestResult.subject4 || '', grade: latestResult.grade4 || '' },
+                        { subject: latestResult.subject5 || '', grade: latestResult.grade5 || '' },
+                        { subject: latestResult.subject6 || '', grade: latestResult.grade6 || '' },
+                        { subject: latestResult.subject7 || '', grade: latestResult.grade7 || '' }
                     ];
                     
                     let y = doc.y;
