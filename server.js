@@ -1010,7 +1010,7 @@ app.get('/api/report/student/:id', (req, res) => {
                    .text(`Name: ${student.fullName}`)
                    .text(`Age: ${student.age} years`)
                    .text(`Gender: ${student.gender === 'MALE' ? 'Male' : 'Female'}`)
-                   .text(`Course: ${student.course}`)
+                   .text(`Class: ${student.class || 'N/A'}`)
                    .text(`Phone: ${student.phone || 'N/A'}`)
                    .text(`Email: ${student.email || 'N/A'}`);
                 doc.moveDown();
