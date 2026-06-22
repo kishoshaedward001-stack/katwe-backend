@@ -833,6 +833,11 @@ app.post('/api/send-results', (req, res) => {
             <li>${results.subject2 || 'N/A'}: ${results.grade2 || 'N/A'}</li>
             <li>${results.subject3 || 'N/A'}: ${results.grade3 || 'N/A'}</li>
             <li>${results.subject4 || 'N/A'}: ${results.grade4 || 'N/A'}</li>
+            <li>${results.subject5 || 'N/A'}: ${results.grade5 || 'N/A'}</li>
+            <li>${results.subject6 || 'N/A'}: ${results.grade6 || 'N/A'}</li>
+            <li>${results.subject7 || 'N/A'}: ${results.grade7 || 'N/A'}</li>
+            <li><strong>Average:</strong> ${results.average || 'N/A'}</li>
+            <li><strong>Division:</strong> ${results.division || 'N/A'}</li>
         </ul>
         <p><strong>Maoni:</strong> ${results.remarks || 'Hakuna maoni'}</p>
         <hr/>
