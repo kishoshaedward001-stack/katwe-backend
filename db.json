@@ -5,7 +5,7 @@
       "username": "admin",
       "email": "admin@katwe.edu",
       "password": "YWRtaW4xMjM=",
-      "fullName": "Admin Mkuu",
+      "fullName": "Admin",
       "role": "admin",
       "isApproved": true,
       "createdAt": "2026-06-08T11:25:19.361Z"
@@ -15,7 +15,7 @@
       "username": "teacher",
       "email": "teacher@katwe.edu",
       "password": "dGVhY2hlcjEyMw==",
-      "fullName": "Mwalimu Juma",
+      "fullName": "Mwalimu",
       "role": "user",
       "isApproved": true,
       "createdAt": "2026-06-08T11:25:19.368Z"
