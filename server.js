@@ -387,7 +387,7 @@ app.get('/api/students/:id', (req, res) => {
 
 // POST new student
 app.post('/api/students', (req, res) => {
-    const { fullName, age, gender, course, phone, email, photo } = req.body;
+    const { fullName, age, gender, class: course, phone, email, photo } = req.body;
     
     if (!fullName || !age || !gender || !course) {
         return res.status(400).json({ error: 'Missing required fields' });
@@ -412,7 +412,7 @@ app.post('/api/students', (req, res) => {
 
 // PUT update student
 app.put('/api/students/:id', (req, res) => {
-    const { fullName, age, gender, course, phone, email, photo } = req.body;
+    const { fullName, age, gender, class: course, phone, email, photo } = req.body;
     
     db.run(
         `UPDATE students SET fullName=?, age=?, gender=?, course=?, phone=?, email=?, photo=? WHERE id=?`,
