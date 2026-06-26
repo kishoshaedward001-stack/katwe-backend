@@ -50,7 +50,7 @@ db.serialize(() => {
         fullName TEXT NOT NULL,
         age INTEGER NOT NULL,
         gender TEXT NOT NULL,
-        course TEXT NOT NULL,
+        form TEXT NOT NULL,
         phone TEXT,
         email TEXT,
         photo TEXT,
@@ -86,7 +86,7 @@ db.serialize(() => {
         subject5 TEXT, grade5 TEXT,
         subject6 TEXT, grade6 TEXT,
         subject7 TEXT, grade7 TEXT,
-        average REAL DEFAULT 0,
+        average DECIMAL(10, 2) NOT NULL,
         division TEXT DEFAULT '',
         remarks TEXT,
         term TEXT,
@@ -387,16 +387,16 @@ app.get('/api/students/:id', (req, res) => {
 
 // POST new student
 app.post('/api/students', (req, res) => {
-    const { fullName, age, gender, class: course, phone, email, photo } = req.body;
-    
-    if (!fullName || !age || !gender || !course) {
+    const { fullName, age, gender, form, phone, email, photo } = req.body;
+
+    if (!fullName || !age || !gender || !form) {
         return res.status(400).json({ error: 'Missing required fields' });
     }
-    
+
     db.run(
-        `INSERT INTO students (fullName, age, gender, course, phone, email, photo) 
+        `INSERT INTO students (fullName, age, gender, form, phone, email, photo) 
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [fullName, age, gender, course, phone || '', email || '', photo || ''],
+        [fullName, age, gender, form, phone || '', email || '', photo || ''],
         function(err) {
             if (err) {
                 console.error('Error creating student:', err);
@@ -404,7 +404,7 @@ app.post('/api/students', (req, res) => {
             }
             res.status(201).json({ 
                 id: this.lastID, 
-                fullName, age, gender, course, phone, email, photo 
+                fullName, age, gender, form, phone: phone || '', email: email || '', photo: photo || '' 
             });
         }
     );
@@ -412,11 +412,11 @@ app.post('/api/students', (req, res) => {
 
 // PUT update student
 app.put('/api/students/:id', (req, res) => {
-    const { fullName, age, gender, class: course, phone, email, photo } = req.body;
+    const { fullName, age, gender, form, phone, email, photo } = req.body;
     
     db.run(
-        `UPDATE students SET fullName=?, age=?, gender=?, course=?, phone=?, email=?, photo=? WHERE id=?`,
-        [fullName, age, gender, course, phone, email, photo, req.params.id],
+        `UPDATE students SET fullName=?, age=?, gender=?, form=?, phone=?, email=?, photo=? WHERE id=?`,
+        [fullName, age, gender, form, phone, email, photo, req.params.id],
         function(err) {
             if (err) {
                 console.error('Error updating student:', err);
@@ -610,7 +610,9 @@ app.post('/api/results', (req, res) => {
     
     // Calculate average and division
     const grades = { grade1, grade2, grade3, grade4, grade5, grade6, grade7 };
-    const average = calculateAverage(grades);
+    const total = Object.values(grades).reduce((sum, grade) => sum + (parseFloat(grade) || 0), 0);
+    const count = Object.values(grades).filter(Boolean).length;
+    const average = count > 0 ? total / count : 0;
     const division = calculateDivision(average);
     
     db.run(
