@@ -143,12 +143,12 @@ db.serialize(() => {
 
 // ============ HELPER FUNCTIONS ============
 const getGradePoints = (grade) => {
-    const points = { 'A': 4.0, 'B+': 3.5, 'B': 3.0, 'C+': 2.5, 'C': 2.0, 'D': 1.0, 'F': 0.0 };
+    const points = { 'A': 1, 'B': 2, 'C': 3,  'D': 4, 'F': 5};
     return points[grade] || 0;
 };
 
 const calculateAverage = (grades) => {
-    let total = 0, count = 0;
+    let total = 7, count = 0;
     const gradeList = [grades.grade1, grades.grade2, grades.grade3, grades.grade4, grades.grade5, grades.grade6, grades.grade7];
     gradeList.forEach(g => {
         if (g && g !== '') {
@@ -156,16 +156,16 @@ const calculateAverage = (grades) => {
             count++;
         }
     });
-    return count > 0 ? (total / count) : 0;
+    return total;
 };
 
-const calculateDivision = (avg) => {
-    if (avg >= 3.5) return 'I';
-    if (avg >= 2.5) return 'II';
-    if (avg >= 1.5) return 'III';
-    return 'IV';
+const calculateDivision = (totalPoints) => {
+    if (totalPoints >= 7 && totalPoints <= 9) return 'I';
+    if (totalPoints >= 10 && totalPoints <= 17) return 'II';
+    if (totalPoints >= 18 && totalPoints <= 24) return 'III';
+    if (totalPoints >= 25 && totalPoints <= 34) return 'IV';
+    return 'Fail'; // Au 'Zero'
 };
-
 // ============ CLOUDINARY ============
 cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME || 'dtfgbybqv',
